@@ -1,9 +1,7 @@
 use kameo::actor::Spawn;
 use neo::actors::PubSubBroker;
-use neo::actors::bacnet::{BACnetNetworkActor, NetworkMsg};
-use neo::messages::{DeviceMsg, PointMsg};
-use neo::types::{ObjectId, ObjectType, PointValue};
-use rand::{Rng, SeedableRng};
+use neo::actors::bacnet::{BACnetNetworkActor, BACnetIOActor};
+use neo::messages::NetworkMsg;
 use tokio::time::{Duration, sleep};
 use tracing::{Level, info};
 
@@ -15,228 +13,112 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_target(false)
         .init();
 
-    info!("🚀 Neo Building Automation System - Proof of Concept");
+    info!("🚀 Neo Building Automation System");
     info!("");
-    info!("This demonstrates a Building Automation System built with Rust actors");
-    info!("inspired by Niagara Framework but using Erlang/BEAM-style supervision");
+    info!("Actor-based BACnet BMS with automatic device discovery");
     info!("");
 
     // 1. Spawn the PubSub broker (central event bus)
-    info!("📡 Spawning PubSub broker...");
+    info!("📡 Starting PubSub broker...");
     let pubsub = PubSubBroker::spawn(PubSubBroker::new());
 
-    sleep(Duration::from_millis(100)).await;
+    // 2. Spawn the BACnet I/O actor (handles all BACnet protocol operations)
+    info!("🔌 Starting BACnet I/O actor...");
+    let io_actor = BACnetIOActor::spawn(BACnetIOActor::new());
+    info!("   • Timeout: 5 seconds");
+    info!("   • Retry attempts: 2");
 
-    // 2. Create a BACnet network
-    info!("🌐 Creating BACnet network 'MSTP-1'...");
+    // 3. Create a BACnet network with auto-discovery enabled
+    info!("🌐 Creating BACnet network 'MainNetwork'...");
     let bacnet_network = BACnetNetworkActor::spawn(BACnetNetworkActor::new(
-        "MSTP-1".to_string(),
-        10, // Poll every 10 seconds
+        "MainNetwork".to_string(),
+        10, // Poll devices every 10 seconds
         pubsub.clone(),
+        io_actor.clone(),
     ));
 
-    sleep(Duration::from_millis(200)).await;
-
-    // 3. Discover BACnet devices on the network
-    info!("");
-    info!("🔍 Discovering BACnet devices on the network...");
-    info!("   (Make sure Python virtual devices are running!)");
+    info!("   • Auto-discovery: enabled");
+    info!("   • Discovery interval: 60 seconds");
+    info!("   • Polling interval: 10 seconds");
     info!("");
 
-    let discovered = match bacnet_network.ask(NetworkMsg::DiscoverDevices).await? {
-        neo::actors::bacnet::NetworkReply::DiscoveredDevices(devices) => devices,
-        _ => Vec::new(),
-    };
-
-    if discovered.is_empty() {
-        info!("⚠️  No BACnet devices discovered!");
-        info!("");
-        info!("To start Python virtual devices:");
-        info!("  cd bacnet-test-devices");
-        info!("  ./run_all.sh");
-        info!("");
-        info!("Press Ctrl+C to exit...");
-        tokio::signal::ctrl_c().await?;
-        return Ok(());
-    }
-
-    info!("✅ Discovered {} BACnet devices:", discovered.len());
-    for (name, instance, addr) in &discovered {
-        info!("   • {} (instance {}) at {}", name, instance, addr);
-    }
-
-    info!("");
-    info!("🏢 Creating device actors...");
-
-    // Create actors for each discovered device
-    for (device_name, device_instance, device_address) in discovered {
-        info!("  Adding device: {}", device_name);
-
-        match bacnet_network
-            .ask(NetworkMsg::AddDevice {
-                device_name: device_name.clone(),
-                device_instance,
-                device_address: Some(device_address),
-            })
-            .await?
-        {
-            neo::actors::bacnet::NetworkReply::DeviceAdded(_dev) => {
-                info!("    ✓ Created actor for {}", device_name);
-            }
-            _ => {
-                info!("    ✗ Failed to create actor for {}", device_name);
-            }
-        };
-
-        sleep(Duration::from_millis(50)).await;
-    }
-
-    sleep(Duration::from_millis(200)).await;
-
-    // 4. Check network status
-    info!("");
-    info!("📊 Network status:");
-    let status = bacnet_network.ask(NetworkMsg::GetStatus).await?;
-    info!("  {:?}", status);
-
-    let devices_list = bacnet_network.ask(NetworkMsg::ListDevices).await?;
-    info!("  Devices: {:?}", devices_list);
-
-    // Test reading properties from discovered devices
-    info!("");
-    info!("🧪 Reading BACnet properties from devices...");
+    // 4. Start background tasks
+    info!("⚙️  Starting background tasks...");
+    let polling_handle = BACnetNetworkActor::start_polling_task(bacnet_network.clone());
+    let discovery_handle = BACnetNetworkActor::start_discovery_task(bacnet_network.clone());
     info!("");
 
-    // Get list of all devices
-    let device_list = match bacnet_network.ask(NetworkMsg::ListDevices).await? {
-        neo::actors::bacnet::NetworkReply::DeviceList(devices) => devices,
-        _ => Vec::new(),
-    };
+    info!("✅ System initialized successfully!");
+    info!("");
+    info!("The system will automatically:");
+    info!("   • Discover BACnet devices on the network");
+    info!("   • Create device actors for each discovered device");
+    info!("   • Discover points on each device");
+    info!("   • Poll device values every 10 seconds");
+    info!("   • Manage device health and reconnection");
+    info!("");
+    info!("💡 To see devices:");
+    info!("   • Start Python virtual devices: cd bacnet-test-devices && ./run_all.sh");
+    info!("   • Or connect real BACnet/IP devices on your network");
+    info!("");
 
-    // Read properties from each device
-    for device_name in device_list.iter().take(5) {  // Limit to first 5 for demo
-        if let Ok(neo::actors::bacnet::NetworkReply::Device(Some(device))) = bacnet_network
-            .ask(NetworkMsg::GetDevice {
-                device_name: device_name.clone(),
-            })
-            .await
-        {
-            info!("📍 Device: {}", device_name);
+    // Wait a bit for initial discovery
+    info!("⏳ Running initial discovery (this may take a few seconds)...");
+    sleep(Duration::from_secs(5)).await;
 
-            // Determine device type based on instance number
-            let instance: u32 = device_name.split('-').last()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(0);
-
-            if instance >= 101 && instance <= 105 {
-                // VAV devices have: AI:1 (temp), AO:1 (damper), BI:1 (occupancy), AV:1 (setpoint)
-                info!("   Type: VAV (Variable Air Volume)");
-
-                // Read temperature (AI:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Temperature (AI:1): {}", value);
-                }
-
-                // Read damper position (AO:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogOutput, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Damper Position (AO:1): {}%", value);
-                }
-
-                // Read occupancy (BI:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::BinaryInput, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Occupancy (BI:1): {}", value);
-                }
-
-                // Read setpoint (AV:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogValue, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Setpoint (AV:1): {}", value);
-                }
-
-            } else if instance >= 201 && instance <= 202 {
-                // AHU devices have: AI:1 (supply temp), AI:2 (return temp), AO:1 (fan speed)
-                info!("   Type: AHU (Air Handling Unit)");
-
-                // Read supply air temp (AI:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Supply Air Temp (AI:1): {}", value);
-                }
-
-                // Read return air temp (AI:2)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 2 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Return Air Temp (AI:2): {}", value);
-                }
-
-                // Read fan speed (AO:1)
-                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
-                    .ask(DeviceMsg::ReadProperty {
-                        object_id: ObjectId { object_type: ObjectType::AnalogOutput, instance: 1 },
-                        property_id: 85,
-                    })
-                    .await
-                {
-                    info!("   • Fan Speed (AO:1): {}%", value);
-                }
-            }
-
+    // Show current status
+    match bacnet_network.ask(NetworkMsg::GetStatus).await? {
+        neo::actors::bacnet::NetworkReply::Status {
+            network_name,
+            device_count,
+        } => {
             info!("");
-        }
+            info!("📊 Current Status:");
+            info!("   Network: {}", network_name);
+            info!("   Devices: {}", device_count);
 
-        sleep(Duration::from_millis(100)).await;
+            if device_count > 0 {
+                // List devices
+                if let Ok(neo::actors::bacnet::NetworkReply::DeviceList(devices)) =
+                    bacnet_network.ask(NetworkMsg::ListDevices).await
+                {
+                    info!("");
+                    info!("📋 Discovered Devices:");
+                    for device_name in devices {
+                        info!("   • {}", device_name);
+                    }
+                }
+            } else {
+                info!("");
+                info!("⚠️  No devices discovered yet.");
+                info!("   The system will continue searching in the background.");
+                info!("   Check that virtual or real BACnet devices are running.");
+            }
+        }
+        _ => {}
     }
 
     info!("");
-    info!("✅ System initialized successfully:");
-    info!("   • Actor-based architecture with Kameo");
-    info!("   • Pub-Sub event broker for decoupled communication");
-    info!("   • BACnet protocol actor hierarchy (Network → Device → Point)");
-    info!("   • Real BACnet/IP communication with virtual devices");
-    info!("   • Message passing between actors");
-    info!("");
-    info!("📡 System is now connected to real BACnet devices");
-    info!("   Press Ctrl+C to stop the server");
+    info!("🔄 System running. Monitoring for devices...");
+    info!("   Press Ctrl+C to exit");
     info!("");
 
-    // 6. Wait for Ctrl+C signal
+    // 6. Keep running until Ctrl+C
     tokio::signal::ctrl_c().await?;
 
     info!("");
-    info!("👋 Received shutdown signal, shutting down gracefully...");
+    info!("👋 Shutting down...");
+
+    // Abort background tasks first
+    polling_handle.abort();
+    discovery_handle.abort();
+
+    // Drop actor references
+    drop(bacnet_network);
+    drop(io_actor);
+    drop(pubsub);
+
+    info!("Shutdown complete");
 
     Ok(())
 }

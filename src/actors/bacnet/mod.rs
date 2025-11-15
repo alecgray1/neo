@@ -1,8 +1,8 @@
 // BACnet protocol actors
 pub mod device;
 pub mod network;
-pub mod point;
+pub mod io;
 
 pub use device::{BACnetDeviceActor, DeviceReply};
-pub use network::{BACnetNetworkActor, NetworkMsg, NetworkReply};
-pub use point::{BACnetPointActor, PointReply};
+pub use network::{BACnetNetworkActor, NetworkReply};
+pub use io::BACnetIOActor;

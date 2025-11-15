@@ -1,14 +1,11 @@
 use crate::actors::PubSubBroker;
 use crate::actors::bacnet::device::{BACnetDeviceActor, DeviceReply};
-use crate::messages::{DeviceMsg, Event, PubSubMsg};
-use crate::types::{DeviceStatus, ServiceState};
-use chrono::Utc;
+use crate::actors::bacnet::io::BACnetIOActor;
+use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, NetworkMsg};
 use dashmap::DashMap;
-use kameo::Actor;
 use kameo::actor::Spawn;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
-use std::time::Instant;
 use tokio::time::{Duration, interval};
 use tracing::{debug, info, warn};
 
@@ -19,7 +16,10 @@ pub struct BACnetNetworkActor {
     pub devices: Arc<DashMap<String, kameo::actor::ActorRef<BACnetDeviceActor>>>,
     pub device_addresses: Arc<DashMap<String, SocketAddr>>,  // Maps device name to network address
     pub poll_interval_secs: u64,
+    pub auto_discovery: bool,
+    pub discovery_interval_secs: u64,
     pubsub: Option<kameo::actor::ActorRef<PubSubBroker>>,
+    io_actor: kameo::actor::ActorRef<BACnetIOActor>,  // Reference to I/O actor for BACnet operations
 }
 
 impl BACnetNetworkActor {
@@ -27,6 +27,7 @@ impl BACnetNetworkActor {
         network_name: String,
         poll_interval_secs: u64,
         pubsub: kameo::actor::ActorRef<PubSubBroker>,
+        io_actor: kameo::actor::ActorRef<BACnetIOActor>,
     ) -> Self {
         configure_bacnet_environment();
         info!("Creating BACnet network: {}", network_name);
@@ -36,25 +37,79 @@ impl BACnetNetworkActor {
             devices: Arc::new(DashMap::new()),
             device_addresses: Arc::new(DashMap::new()),
             poll_interval_secs,
+            auto_discovery: true,  // Enabled by default
+            discovery_interval_secs: 60,  // Every 60 seconds
             pubsub: Some(pubsub),
+            io_actor,
         }
     }
 
     /// Add a device to this network (with optional network address for real BACnet)
+    /// This method is idempotent - if the device already exists, it updates the address if changed
     pub async fn add_device(
         &mut self,
         device_name: String,
         device_instance: u32,
         device_address: Option<SocketAddr>,
+        network_actor_ref: kameo::actor::ActorRef<BACnetNetworkActor>,
     ) -> crate::types::Result<kameo::actor::ActorRef<BACnetDeviceActor>> {
+        // Check if device already exists
+        if let Some(existing_device) = self.devices.get(&device_name) {
+            debug!("Device {} already exists, checking if address changed", device_name);
+
+            // Update address if different
+            if let Some(addr) = device_address {
+                if let Some(mut stored_addr) = self.device_addresses.get_mut(&device_name) {
+                    if *stored_addr != addr {
+                        info!("Device {} address changed from {} to {}", device_name, *stored_addr, addr);
+                        *stored_addr = addr;
+                        // TODO: In Phase 4, we could trigger reconnection here
+                    }
+                } else {
+                    self.device_addresses.insert(device_name.clone(), addr);
+                }
+            }
+
+            return Ok(existing_device.clone());
+        }
+
+        // New device - spawn actor
         if let Some(pubsub) = &self.pubsub {
+            info!("Spawning new device actor for {} (instance {})", device_name, device_instance);
+
+            // Use I/O actor to connect to device if we have an address
+            if let Some(addr) = device_address {
+                match self.io_actor.ask(BACnetIOMsg::ConnectDevice {
+                    device_id: device_instance,
+                    address: addr,
+                }).await {
+                    Ok(BACnetIOReply::Connected) => {
+                        info!("I/O actor connected to device {} at {}", device_name, addr);
+                    }
+                    Ok(BACnetIOReply::IoError(e)) => {
+                        warn!("Failed to connect to device {}: {}", device_name, e);
+                    }
+                    Err(e) => {
+                        warn!("Failed to send connect message to I/O actor: {}", e);
+                    }
+                    _ => {
+                        warn!("Unexpected reply from I/O actor");
+                    }
+                }
+            }
+
+            // Create device actor with I/O actor reference
             let device = BACnetDeviceActor::spawn(BACnetDeviceActor::new(
                 device_name.clone(),
                 self.network_name.clone(),
                 device_instance,
-                device_address,
                 pubsub.clone(),
+                self.io_actor.clone(),
             ));
+
+            // Link the device actor to the network actor (supervision tree)
+            network_actor_ref.link(&device);
+            debug!("Linked device {} to network {} for supervision", device_name, self.network_name);
 
             self.devices.insert(device_name.clone(), device.clone());
 
@@ -64,6 +119,19 @@ impl BACnetNetworkActor {
                     "Added device {} (instance {}) at {} to BACnet network {}",
                     device_name, device_instance, addr, self.network_name
                 );
+
+                // Publish DeviceDiscovered event
+                use crate::messages::{Event, PubSubMsg};
+                let topic = format!("bacnet/{}/discovery/device_added", self.network_name);
+                let event = Event::DeviceDiscovered {
+                    network: self.network_name.clone(),
+                    device: device_name,
+                    instance: device_instance,
+                    address: addr,
+                    timestamp: std::time::Instant::now(),
+                    timestamp_utc: chrono::Utc::now(),
+                };
+                let _ = pubsub.tell(PubSubMsg::Publish { topic, event }).await;
             } else {
                 info!(
                     "Added simulated device {} (instance {}) to BACnet network {}",
@@ -82,67 +150,82 @@ impl BACnetNetworkActor {
     /// Discover BACnet devices on the network via Who-Is
     pub async fn discover_devices(&mut self) -> crate::types::Result<Vec<(String, u32, SocketAddr)>> {
         info!("Scanning for BACnet devices on network {}...", self.network_name);
-        info!("Sending Who-Is broadcast...");
+        info!("Sending Who-Is broadcast via I/O actor...");
 
-        // Run Who-Is discovery in a blocking task since it's synchronous
-        let devices = tokio::task::spawn_blocking(move || {
-            use bacnet::whois::WhoIs;
-            use std::time::Duration;
-
-            WhoIs::new()
-                .timeout(Duration::from_secs(3))
-                .subnet(None)  // None for global broadcast
-                .execute()
-        })
-        .await
-        .map_err(|e| crate::types::Error::BACnet(format!("Who-Is task failed: {}", e)))?
-        .map_err(|e| crate::types::Error::BACnet(format!("Who-Is discovery failed: {}", e)))?;
-
-        info!("Received {} I-Am response(s)", devices.len());
-
-        // Convert IAmDevice to our format (name, instance, address)
-        let mut discovered_devices = Vec::new();
-        for device in devices {
-            // Create device name from device ID
-            let device_name = format!("Device-{}", device.device_id);
-
-            // Convert MAC address to SocketAddr
-            // MAC format from BACpypes3: [IP1, IP2, IP3, IP4, PORT_HI, PORT_LO]
-            if device.mac_addr[0] != 0 || device.mac_addr[1] != 0 {
-                let ip = std::net::Ipv4Addr::new(
-                    device.mac_addr[0],
-                    device.mac_addr[1],
-                    device.mac_addr[2],
-                    device.mac_addr[3],
-                );
-                let port = ((device.mac_addr[4] as u16) << 8) | (device.mac_addr[5] as u16);
-                let addr = SocketAddr::new(ip.into(), port);
-
-                info!(
-                    "  Found: {} (instance {}) at {} (vendor_id: {})",
-                    device_name, device.device_id, addr, device.vendor_id
-                );
-
-                discovered_devices.push((device_name, device.device_id, addr));
-            } else {
-                warn!(
-                    "  Skipping device {} (instance {}) - invalid MAC address",
-                    device_name, device.device_id
-                );
+        // Use I/O actor to perform Who-Is discovery
+        match self.io_actor.ask(BACnetIOMsg::WhoIs {
+            timeout_secs: 3,
+            subnet: None,
+        }).await {
+            Ok(BACnetIOReply::Devices(devices)) => {
+                info!("Discovered {} BACnet device(s)", devices.len());
+                for (name, instance, addr) in &devices {
+                    info!("  Found: {} (instance {}) at {}", name, instance, addr);
+                }
+                Ok(devices)
+            }
+            Ok(BACnetIOReply::IoError(e)) => {
+                warn!("Who-Is discovery failed: {}", e);
+                Err(crate::types::Error::BACnet(e))
+            }
+            Err(e) => {
+                warn!("Failed to send Who-Is message to I/O actor: {}", e);
+                Err(crate::types::Error::BACnet(format!("I/O actor error: {}", e)))
+            }
+            _ => {
+                warn!("Unexpected reply from I/O actor");
+                Err(crate::types::Error::BACnet("Unexpected reply".to_string()))
             }
         }
-
-        if discovered_devices.is_empty() {
-            warn!("No BACnet devices discovered via Who-Is on network {}", self.network_name);
-        } else {
-            info!("Successfully discovered {} BACnet device(s)", discovered_devices.len());
-        }
-
-        Ok(discovered_devices)
     }
 
     /// Start background polling task
-    async fn start_polling(&self, actor_ref: kameo::actor::WeakActorRef<Self>) {
+    pub fn start_polling_task(actor_ref: kameo::actor::ActorRef<Self>) -> tokio::task::JoinHandle<()> {
+        let weak_ref = actor_ref.downgrade();
+        let actor_clone = actor_ref.clone();
+
+        tokio::spawn(async move {
+            // Get initial values from the actor
+            let (poll_interval, network_name) =
+                if let Ok(NetworkReply::Status { network_name, .. }) =
+                    actor_clone.ask(NetworkMsg::GetStatus).await
+                {
+                    (10u64, network_name)
+                } else {
+                    (10u64, "network".to_string())
+                };
+
+            let mut tick = tokio::time::interval(Duration::from_secs(poll_interval));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            info!("⏱️  Polling task started for network {}, interval: {}s", network_name, poll_interval);
+
+            loop {
+                tick.tick().await;
+                info!("⏰ Polling tick for network {}", network_name);
+
+                // Check if actor still exists
+                if weak_ref.upgrade().is_none() {
+                    debug!("BACnet network {} polling task exiting", network_name);
+                    break;
+                }
+
+                // Use PollAll message instead of accessing devices directly
+                match actor_clone.ask(NetworkMsg::PollAll).await {
+                    Ok(_) => {
+                        info!("🔄 Polling completed for network {}", network_name);
+                    }
+                    Err(e) => {
+                        warn!("Polling failed for network {}: {}", network_name, e);
+                    }
+                }
+            }
+        })
+    }
+
+    /// Start background polling task (old version - to be removed)
+    #[allow(dead_code)]
+    async fn start_polling_old(&self, actor_ref: kameo::actor::WeakActorRef<Self>) {
         let poll_interval = self.poll_interval_secs;
         let devices = self.devices.clone();
         let network_name = self.network_name.clone();
@@ -184,6 +267,86 @@ impl BACnetNetworkActor {
                 }
             }
         });
+    }
+
+    /// Start background discovery task
+    pub fn start_discovery_task(actor_ref: kameo::actor::ActorRef<Self>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let weak_ref = actor_ref.downgrade();
+
+            // Do an immediate discovery on startup
+            info!("Running initial device discovery...");
+            if let Ok(crate::actors::bacnet::NetworkReply::DiscoveredDevices(devices)) =
+                actor_ref.ask(NetworkMsg::DiscoverDevices).await
+            {
+                info!("Initial discovery found {} devices", devices.len());
+
+                // Auto-add discovered devices
+                for (name, instance, address) in devices {
+                    let _ = actor_ref
+                        .ask(NetworkMsg::AddDevice {
+                            device_name: name,
+                            device_instance: instance,
+                            device_address: Some(address),
+                        })
+                        .await;
+                }
+            }
+
+            loop {
+                // Get discovery interval
+                let interval = match actor_ref.ask(NetworkMsg::GetDiscoveryInterval).await {
+                    Ok(crate::actors::bacnet::NetworkReply::DiscoveryInterval(secs)) => secs,
+                    _ => 60, // Default fallback
+                };
+
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+
+                // Check if actor still alive
+                if weak_ref.upgrade().is_none() {
+                    info!("Network actor stopped, ending discovery task");
+                    break;
+                }
+
+                // Check if auto-discovery enabled
+                let enabled = match actor_ref.ask(NetworkMsg::IsAutoDiscoveryEnabled).await {
+                    Ok(crate::actors::bacnet::NetworkReply::AutoDiscoveryEnabled(enabled)) => {
+                        enabled
+                    }
+                    _ => false,
+                };
+
+                if !enabled {
+                    debug!("Auto-discovery disabled, skipping");
+                    continue;
+                }
+
+                // Run discovery
+                debug!("Running periodic device discovery");
+                match actor_ref.ask(NetworkMsg::DiscoverDevices).await {
+                    Ok(crate::actors::bacnet::NetworkReply::DiscoveredDevices(devices)) => {
+                        if !devices.is_empty() {
+                            info!("Periodic discovery found {} devices", devices.len());
+
+                            // Auto-add discovered devices
+                            for (name, instance, address) in devices {
+                                let _ = actor_ref
+                                    .ask(NetworkMsg::AddDevice {
+                                        device_name: name,
+                                        device_instance: instance,
+                                        device_address: Some(address),
+                                    })
+                                    .await;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Periodic discovery failed: {}", e);
+                    }
+                    _ => {}
+                }
+            }
+        })
     }
 }
 
@@ -253,7 +416,7 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
     async fn handle(
         &mut self,
         msg: NetworkMsg,
-        _ctx: &mut kameo::message::Context<Self, Self::Reply>,
+        ctx: &mut kameo::message::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
             NetworkMsg::GetStatus => NetworkReply::Status {
@@ -268,23 +431,72 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             }
 
             NetworkMsg::PollAll => {
-                let mut polled = 0;
-                let mut failed = 0;
+                let device_count = self.devices.len();
+                info!("Starting concurrent poll of {} devices", device_count);
+
+                // Spawn concurrent polling tasks (no deadlock!)
+                let mut tasks = Vec::new();
 
                 for device_entry in self.devices.iter() {
-                    let device_ref = device_entry.value();
-                    match device_ref.ask(DeviceMsg::Poll).await {
-                        Ok(DeviceReply::Polled) => polled += 1,
-                        _ => failed += 1,
-                    }
+                    let device_name = device_entry.key().clone();
+                    let device_ref = device_entry.value().clone();
+
+                    // Spawn a task for each device
+                    let task = tokio::spawn(async move {
+                        debug!("Polling device {}", device_name);
+                        match device_ref.tell(DeviceMsg::Poll).await {
+                            Ok(_) => {
+                                debug!("Device {} poll initiated", device_name);
+                                Ok(())
+                            }
+                            Err(e) => {
+                                warn!("Failed to send poll to device {}: {}", device_name, e);
+                                Err(())
+                            }
+                        }
+                    });
+
+                    tasks.push(task);
                 }
 
+                // Wait for all polling tasks to complete
+                let results = futures::future::join_all(tasks).await;
+
+                let polled = results.iter().filter(|r| r.is_ok()).count();
+                let failed = device_count - polled;
+
+                info!("Poll complete: {} initiated, {} failed to initiate", polled, failed);
                 NetworkReply::PollResult { polled, failed }
             }
 
             NetworkMsg::AddDevice { device_name, device_instance, device_address } => {
-                match self.add_device(device_name, device_instance, device_address).await {
-                    Ok(device_ref) => NetworkReply::DeviceAdded(device_ref),
+                let network_ref = ctx.actor_ref().clone();
+                match self.add_device(device_name.clone(), device_instance, device_address, network_ref).await {
+                    Ok(device_ref) => {
+                        // Trigger point discovery in background for real devices
+                        if device_address.is_some() {
+                            let device_clone = device_ref.clone();
+                            tokio::spawn(async move {
+                                // Wait a moment for device to be fully initialized
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                                match device_clone.ask(DeviceMsg::DiscoverPoints).await {
+                                    Ok(crate::actors::bacnet::DeviceReply::PointsDiscovered { count }) => {
+                                        info!("Auto-discovered {} points on device {}", count, device_name);
+                                    }
+                                    Ok(crate::actors::bacnet::DeviceReply::Failure(e)) => {
+                                        warn!("Point discovery failed for {}: {}", device_name, e);
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to trigger discovery for {}: {}", device_name, e);
+                                    }
+                                    _ => {}
+                                }
+                            });
+                        }
+
+                        NetworkReply::DeviceAdded(device_ref)
+                    }
                     Err(e) => {
                         info!("Failed to add device: {}", e);
                         // Return a dummy ActorRef - this is not ideal but works for now
@@ -292,8 +504,8 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                             "error".to_string(),
                             "error".to_string(),
                             0,
-                            None,
                             self.pubsub.clone().unwrap(),
+                            self.io_actor.clone(),
                         )))
                     }
                 }
@@ -310,22 +522,42 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                     Err(_) => NetworkReply::DiscoveredDevices(Vec::new()),
                 }
             }
+
+            // Auto-discovery management messages
+            NetworkMsg::EnableAutoDiscovery => {
+                self.auto_discovery = true;
+                info!("Auto-discovery enabled for network {}", self.network_name);
+                NetworkReply::Success
+            }
+
+            NetworkMsg::DisableAutoDiscovery => {
+                self.auto_discovery = false;
+                info!("Auto-discovery disabled for network {}", self.network_name);
+                NetworkReply::Success
+            }
+
+            NetworkMsg::IsAutoDiscoveryEnabled => {
+                NetworkReply::AutoDiscoveryEnabled(self.auto_discovery)
+            }
+
+            NetworkMsg::SetDiscoveryInterval(secs) => {
+                self.discovery_interval_secs = secs;
+                info!("Discovery interval set to {}s for network {}", secs, self.network_name);
+                NetworkReply::Success
+            }
+
+            NetworkMsg::GetDiscoveryInterval => {
+                NetworkReply::DiscoveryInterval(self.discovery_interval_secs)
+            }
+
+            // BACnet I/O operations are now handled by dedicated BACnetIOActor
+            // Devices communicate directly with I/O actor for reads/writes
+            NetworkMsg::ReadProperty { .. } | NetworkMsg::WriteProperty { .. } => {
+                warn!("ReadProperty/WriteProperty messages should be sent directly to BACnetIOActor, not NetworkActor");
+                NetworkReply::BACnetError("Use BACnetIOActor for I/O operations".to_string())
+            }
         }
     }
-}
-
-#[derive(Debug)]
-pub enum NetworkMsg {
-    GetStatus,
-    ListDevices,
-    PollAll,
-    AddDevice {
-        device_name: String,
-        device_instance: u32,
-        device_address: Option<SocketAddr>,  // Network address for real BACnet devices
-    },
-    GetDevice { device_name: String },
-    DiscoverDevices,  // New: Discover devices via Who-Is
 }
 
 #[derive(Debug, kameo::Reply)]
@@ -341,5 +573,13 @@ pub enum NetworkReply {
     },
     DeviceAdded(kameo::actor::ActorRef<BACnetDeviceActor>),
     Device(Option<kameo::actor::ActorRef<BACnetDeviceActor>>),
-    DiscoveredDevices(Vec<(String, u32, SocketAddr)>),  // (name, instance, address)
+    DiscoveredDevices(Vec<(String, u32, SocketAddr)>),
+    Success,
+    AutoDiscoveryEnabled(bool),
+    DiscoveryInterval(u64),
+
+    // Legacy I/O replies (deprecated - use BACnetIOActor directly)
+    PropertyValue(crate::types::PointValue),
+    PropertyWritten,
+    BACnetError(String),
 }

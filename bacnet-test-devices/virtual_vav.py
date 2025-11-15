@@ -113,7 +113,9 @@ class VirtualVAVApplication:
     async def simulate_values(self):
         """Periodically update values to simulate real device behavior"""
         while self.running:
-            await asyncio.sleep(5)  # Update every 5 seconds
+            # Random sleep between 5-10 seconds
+            sleep_duration = random.randint(5, 10)
+            await asyncio.sleep(sleep_duration)
 
             for device in self.devices:
                 # Simulate temperature drift

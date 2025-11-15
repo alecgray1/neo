@@ -74,6 +74,39 @@ pub enum PointQuality {
     Stale,
 }
 
+/// BACnet point data structure (replaces point actor)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BACnetPoint {
+    pub object_id: ObjectId,
+    pub present_value: PointValue,
+    pub quality: PointQuality,
+    #[serde(skip, default = "Instant::now")]
+    pub last_update: Instant,
+    pub last_update_utc: DateTime<Utc>,
+
+    // Metadata (discovered from device)
+    pub object_name: Option<String>,
+    pub description: Option<String>,
+    pub units: Option<String>,
+    pub cov_increment: Option<f32>,
+}
+
+impl BACnetPoint {
+    pub fn new(object_id: ObjectId, present_value: PointValue) -> Self {
+        Self {
+            object_id,
+            present_value,
+            quality: PointQuality::Uncertain,
+            last_update: Instant::now(),
+            last_update_utc: Utc::now(),
+            object_name: None,
+            description: None,
+            units: None,
+            cov_increment: None,
+        }
+    }
+}
+
 /// Device status
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum DeviceStatus {
