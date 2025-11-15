@@ -109,15 +109,6 @@ pub enum NetworkMsg {
     GetDiscoveryInterval,
 }
 
-/// Pub-sub broker messages
-#[derive(Debug)]
-pub enum PubSubMsg {
-    Publish { topic: String, event: Event },
-    Subscribe { topic_pattern: String, subscriber_id: String },
-    Unsubscribe { topic_pattern: String, subscriber_id: String },
-    GetStats,
-}
-
 /// BACnet I/O Actor messages - handles all BACnet protocol I/O operations
 #[derive(Debug, Clone)]
 pub enum BACnetIOMsg {

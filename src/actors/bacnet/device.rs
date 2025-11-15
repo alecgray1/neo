@@ -1,9 +1,10 @@
 use crate::actors::PubSubBroker;
 use crate::actors::bacnet::io::BACnetIOActor;
-use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, Event, PubSubMsg};
+use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, Event};
 use crate::types::{BACnetPoint, DeviceStatus, ObjectId, ObjectType, PointQuality, PointValue};
 use chrono::Utc;
 use dashmap::DashMap;
+use kameo_actors::pubsub::Publish;
 use std::time::Instant;
 use tracing::{debug, error, info, warn};
 
@@ -110,10 +111,6 @@ impl BACnetDeviceActor {
     /// Publish point value change to PubSub
     async fn publish_point_change(&self, object_id: ObjectId, point: &BACnetPoint) {
         if let Some(pubsub) = &self.pubsub {
-            let topic = format!(
-                "bacnet/{}/{}/{}",
-                self.network_name, self.device_name, object_id
-            );
             let event = Event::PointValueChanged {
                 point: format!("{}/{}/{}", self.network_name, self.device_name, object_id),
                 value: point.present_value.clone(),
@@ -121,7 +118,7 @@ impl BACnetDeviceActor {
                 timestamp: point.last_update,
                 timestamp_utc: point.last_update_utc,
             };
-            let _ = pubsub.tell(PubSubMsg::Publish { topic, event }).await;
+            let _ = pubsub.tell(Publish(event)).await;
         }
     }
 
@@ -137,8 +134,6 @@ impl BACnetDeviceActor {
 
             // Publish status change event
             if let Some(pubsub) = &self.pubsub {
-                let topic = format!("bacnet/{}/{}/status", self.network_name, self.device_name);
-
                 let event = Event::DeviceStatusChanged {
                     device: self.device_name.clone(),
                     network: self.network_name.clone(),
@@ -147,7 +142,7 @@ impl BACnetDeviceActor {
                     timestamp_utc: Utc::now(),
                 };
 
-                let _ = pubsub.tell(PubSubMsg::Publish { topic, event }).await;
+                let _ = pubsub.tell(Publish(event)).await;
             }
         }
     }

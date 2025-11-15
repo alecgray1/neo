@@ -1,5 +1,5 @@
 use kameo::actor::Spawn;
-use neo::actors::PubSubBroker;
+use kameo_actors::DeliveryStrategy;
 use neo::actors::bacnet::{BACnetNetworkActor, BACnetIOActor};
 use neo::messages::NetworkMsg;
 use tokio::time::{Duration, sleep};
@@ -20,7 +20,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 1. Spawn the PubSub broker (central event bus)
     info!("📡 Starting PubSub broker...");
-    let pubsub = PubSubBroker::spawn(PubSubBroker::new());
+    let pubsub = neo::actors::PubSubBroker::spawn(
+        neo::actors::PubSubBroker::new(DeliveryStrategy::Guaranteed)
+    );
 
     // 2. Spawn the BACnet I/O actor (handles all BACnet protocol operations)
     info!("🔌 Starting BACnet I/O actor...");

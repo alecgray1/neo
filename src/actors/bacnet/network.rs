@@ -1,9 +1,10 @@
 use crate::actors::PubSubBroker;
 use crate::actors::bacnet::device::BACnetDeviceActor;
 use crate::actors::bacnet::io::BACnetIOActor;
-use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, NetworkMsg};
+use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, Event, NetworkMsg};
 use dashmap::DashMap;
 use kameo::actor::Spawn;
+use kameo_actors::pubsub::Publish;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
 use tokio::time::Duration;
@@ -121,8 +122,6 @@ impl BACnetNetworkActor {
                 );
 
                 // Publish DeviceDiscovered event
-                use crate::messages::{Event, PubSubMsg};
-                let topic = format!("bacnet/{}/discovery/device_added", self.network_name);
                 let event = Event::DeviceDiscovered {
                     network: self.network_name.clone(),
                     device: device_name,
@@ -131,7 +130,7 @@ impl BACnetNetworkActor {
                     timestamp: std::time::Instant::now(),
                     timestamp_utc: chrono::Utc::now(),
                 };
-                let _ = pubsub.tell(PubSubMsg::Publish { topic, event }).await;
+                let _ = pubsub.tell(Publish(event)).await;
             } else {
                 info!(
                     "Added simulated device {} (instance {}) to BACnet network {}",
