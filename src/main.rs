@@ -102,39 +102,122 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let devices_list = bacnet_network.ask(NetworkMsg::ListDevices).await?;
     info!("  Devices: {:?}", devices_list);
 
-    // Test reading a property from VAV-1
+    // Test reading properties from discovered devices
     info!("");
-    info!("🧪 Testing BACnet property read...");
-    if let Ok(neo::actors::bacnet::NetworkReply::Device(Some(vav1))) = bacnet_network
-        .ask(NetworkMsg::GetDevice {
-            device_name: "VAV-1".to_string(),
-        })
-        .await
-    {
-        info!("  Reading VAV-1 temperature (AI:1)...");
-        match vav1
-            .ask(DeviceMsg::ReadProperty {
-                object_id: ObjectId {
-                    object_type: ObjectType::AnalogInput,
-                    instance: 1,
-                },
-                property_id: 85, // Present Value
+    info!("🧪 Reading BACnet properties from devices...");
+    info!("");
+
+    // Get list of all devices
+    let device_list = match bacnet_network.ask(NetworkMsg::ListDevices).await? {
+        neo::actors::bacnet::NetworkReply::DeviceList(devices) => devices,
+        _ => Vec::new(),
+    };
+
+    // Read properties from each device
+    for device_name in device_list.iter().take(5) {  // Limit to first 5 for demo
+        if let Ok(neo::actors::bacnet::NetworkReply::Device(Some(device))) = bacnet_network
+            .ask(NetworkMsg::GetDevice {
+                device_name: device_name.clone(),
             })
             .await
         {
-            Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, quality }) => {
-                info!("  ✓ Temperature: {} (quality: {:?})", value, quality);
+            info!("📍 Device: {}", device_name);
+
+            // Determine device type based on instance number
+            let instance: u32 = device_name.split('-').last()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0);
+
+            if instance >= 101 && instance <= 105 {
+                // VAV devices have: AI:1 (temp), AO:1 (damper), BI:1 (occupancy), AV:1 (setpoint)
+                info!("   Type: VAV (Variable Air Volume)");
+
+                // Read temperature (AI:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Temperature (AI:1): {}", value);
+                }
+
+                // Read damper position (AO:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogOutput, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Damper Position (AO:1): {}%", value);
+                }
+
+                // Read occupancy (BI:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::BinaryInput, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Occupancy (BI:1): {}", value);
+                }
+
+                // Read setpoint (AV:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogValue, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Setpoint (AV:1): {}", value);
+                }
+
+            } else if instance >= 201 && instance <= 202 {
+                // AHU devices have: AI:1 (supply temp), AI:2 (return temp), AO:1 (fan speed)
+                info!("   Type: AHU (Air Handling Unit)");
+
+                // Read supply air temp (AI:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Supply Air Temp (AI:1): {}", value);
+                }
+
+                // Read return air temp (AI:2)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogInput, instance: 2 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Return Air Temp (AI:2): {}", value);
+                }
+
+                // Read fan speed (AO:1)
+                if let Ok(neo::actors::bacnet::DeviceReply::PropertyValue { value, .. }) = device
+                    .ask(DeviceMsg::ReadProperty {
+                        object_id: ObjectId { object_type: ObjectType::AnalogOutput, instance: 1 },
+                        property_id: 85,
+                    })
+                    .await
+                {
+                    info!("   • Fan Speed (AO:1): {}%", value);
+                }
             }
-            Ok(neo::actors::bacnet::DeviceReply::Failure(msg)) => {
-                info!("  ✗ Failed to read: {}", msg);
-            }
-            Err(e) => {
-                info!("  ✗ Error: {}", e);
-            }
-            _ => {
-                info!("  ✗ Unexpected response");
-            }
+
+            info!("");
         }
+
+        sleep(Duration::from_millis(100)).await;
     }
 
     info!("");
