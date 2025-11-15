@@ -1,0 +1,100 @@
+version: '3.8'
+
+# This version uses BRIDGE networking to allow multiple devices
+# Each container gets its own network namespace and IP address
+# All devices can bind to port 47808 independently
+
+services:
+  # VAV Devices (5 units)
+  vav-1:
+    build: .
+    container_name: bacnet-vav-1
+    environment:
+      - DEVICE_NAME=VAV-1
+      - DEVICE_INSTANCE=101
+      - DEVICE_TYPE=VAV
+      - IP_ADDRESS=10.0.1.101
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.101
+
+  vav-2:
+    build: .
+    container_name: bacnet-vav-2
+    environment:
+      - DEVICE_NAME=VAV-2
+      - DEVICE_INSTANCE=102
+      - DEVICE_TYPE=VAV
+      - IP_ADDRESS=10.0.1.102
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.102
+
+  vav-3:
+    build: .
+    container_name: bacnet-vav-3
+    environment:
+      - DEVICE_NAME=VAV-3
+      - DEVICE_INSTANCE=103
+      - DEVICE_TYPE=VAV
+      - IP_ADDRESS=10.0.1.103
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.103
+
+  vav-4:
+    build: .
+    container_name: bacnet-vav-4
+    environment:
+      - DEVICE_NAME=VAV-4
+      - DEVICE_INSTANCE=104
+      - DEVICE_TYPE=VAV
+      - IP_ADDRESS=10.0.1.104
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.104
+
+  vav-5:
+    build: .
+    container_name: bacnet-vav-5
+    environment:
+      - DEVICE_NAME=VAV-5
+      - DEVICE_INSTANCE=105
+      - DEVICE_TYPE=VAV
+      - IP_ADDRESS=10.0.1.105
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.105
+
+  # AHU Devices (2 units)
+  ahu-1:
+    build: .
+    container_name: bacnet-ahu-1
+    environment:
+      - DEVICE_NAME=AHU-1
+      - DEVICE_INSTANCE=201
+      - DEVICE_TYPE=AHU
+      - IP_ADDRESS=10.0.1.201
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.201
+
+  ahu-2:
+    build: .
+    container_name: bacnet-ahu-2
+    environment:
+      - DEVICE_NAME=AHU-2
+      - DEVICE_INSTANCE=202
+      - DEVICE_TYPE=AHU
+      - IP_ADDRESS=10.0.1.202
+    networks:
+      bacnet:
+        ipv4_address: 10.0.1.202
+
+networks:
+  bacnet:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.0.1.0/24
+          gateway: 10.0.1.1

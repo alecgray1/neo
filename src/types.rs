@@ -132,6 +132,9 @@ pub enum Error {
     #[error("Database error: {0}")]
     Database(String),
 
+    #[error("BACnet error: {0}")]
+    BACnet(String),
+
     #[error("Other: {0}")]
     Other(String),
 }

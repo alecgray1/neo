@@ -8,6 +8,9 @@ edition = "2024"
 kameo = "0.19.1"
 tokio = { version = "1.40", features = ["full"] }
 
+# BACnet protocol
+bacnet = { git = "https://github.com/Green-Mod/bacnet-stack-rs", package = "bacnet" }
+
 # Async utilities
 futures = "0.3"
 async-trait = "0.1"
