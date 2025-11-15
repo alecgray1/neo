@@ -87,7 +87,6 @@ pub enum DeviceMsg {
     ListPoints,
     GetPoint { object_id: ObjectId },
     Reconnect,
-    SetNetworkActor(kameo::actor::ActorRef<crate::actors::bacnet::BACnetNetworkActor>),
 }
 
 /// Network actor messages
@@ -108,23 +107,6 @@ pub enum NetworkMsg {
     IsAutoDiscoveryEnabled,
     SetDiscoveryInterval(u64),
     GetDiscoveryInterval,
-
-    // BACnet I/O operations (processed sequentially by network actor)
-    ReadProperty {
-        device_id: u32,
-        object_type: ObjectType,
-        object_instance: u32,
-        property_id: u8,
-        array_index: Option<u32>,  // None for BACNET_ARRAY_ALL
-        raw: bool,  // If true, return RawBACnetValue instead of converting to PointValue
-    },
-    WriteProperty {
-        device_id: u32,
-        object_type: ObjectType,
-        object_instance: u32,
-        property_id: u8,
-        value: PointValue,
-    },
 }
 
 /// Pub-sub broker messages

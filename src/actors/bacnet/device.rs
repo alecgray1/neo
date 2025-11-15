@@ -434,86 +434,24 @@ impl BACnetDeviceActor {
     #[allow(dead_code)]
     async fn read_point_metadata(
         &self,
-        object_id: ObjectId,
+        _object_id: ObjectId,
     ) -> crate::types::Result<(Option<String>, Option<String>, Option<String>)> {
         // Property IDs from BACnet standard:
         // 77 = object-name
         // 28 = description
         // 117 = units (for analog objects)
 
-        // TODO: Implement using read_property method when available in bacnet library
-        // For now, return None for all metadata
-
+        // TODO: Implement using I/O actor ReadProperty with specific property IDs
         Ok((None, None, None))
     }
 
     /// Attempt to reconnect to the device
     async fn reconnect(&mut self) -> crate::types::Result<()> {
-        // TODO: Reconnection should be handled by the network actor
-        // For now, just return an error
+        // TODO: Implement reconnection via I/O actor
+        // The I/O actor should handle disconnecting and reconnecting to devices
         Err(crate::types::Error::BACnet(
-            "reconnect not yet refactored for new architecture".to_string(),
+            "Reconnect not yet implemented for I/O actor architecture".to_string(),
         ))
-
-        /*
-        if let Some(addr) = self.device_address {
-            info!(
-                "Attempting to reconnect to device {} at {}",
-                self.device_name, addr
-            );
-
-            // Drop old connection
-            self.bacnet_server = None;
-
-            // Create new connection
-            let ip = match addr.ip() {
-                std::net::IpAddr::V4(ipv4) => ipv4,
-                std::net::IpAddr::V6(_) => {
-                    return Err(crate::types::Error::BACnet(
-                        "IPv6 not supported".to_string(),
-                    ));
-                }
-            };
-
-            let mut server = BACnetServer::builder()
-                .ip(ip)
-                .port(addr.port())
-                .device_id(self.device_instance)
-                .build();
-
-            match server.connect() {
-                Ok(_) => {
-                    info!("Successfully reconnected to device {}", self.device_name);
-                    self.bacnet_server = Some(Arc::new(Mutex::new(server)));
-                    self.consecutive_failures = 0;
-                    self.last_seen = Instant::now();
-                    self.last_seen_utc = Utc::now();
-                    self.set_status(DeviceStatus::Online).await;
-
-                    // Re-discover points after reconnection
-                    match self.discover_points().await {
-                        Ok(count) => {
-                            info!("Re-discovered {} points after reconnection", count);
-                        }
-                        Err(e) => {
-                            warn!("Point re-discovery failed after reconnection: {}", e);
-                        }
-                    }
-
-                    Ok(())
-                }
-                Err(e) => {
-                    error!("Failed to reconnect to device {}: {}", self.device_name, e);
-                    self.set_status(DeviceStatus::Offline).await;
-                    Err(crate::types::Error::BACnet(e.to_string()))
-                }
-            }
-        } else {
-            Err(crate::types::Error::BACnet(
-                "No address available for reconnection".to_string(),
-            ))
-        }
-        */
     }
 }
 
@@ -593,15 +531,6 @@ impl kameo::message::Message<DeviceMsg> for BACnetDeviceActor {
                     }
                 }
                 Err(e) => DeviceReply::Failure(format!("Reconnection failed: {}", e)),
-            },
-
-            // SetNetworkActor is deprecated - we now pass io_actor in constructor
-            DeviceMsg::SetNetworkActor(_) => {
-                warn!("SetNetworkActor is deprecated - io_actor is set in constructor");
-                DeviceReply::Status {
-                    status: self.status,
-                    point_count: self.points.len(),
-                }
             },
         }
     }

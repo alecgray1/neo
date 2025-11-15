@@ -26,6 +26,7 @@ pub struct BACnetIOActor {
     default_timeout_ms: u64,
 
     /// Maximum number of retry attempts
+    #[allow(dead_code)]
     max_retries: u32,
 }
 

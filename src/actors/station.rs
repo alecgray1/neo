@@ -1,15 +1,13 @@
 use crate::actors::PubSubBroker;
-use crate::messages::{Event, PubSubMsg, StationMsg};
+use crate::messages::StationMsg;
 use crate::types::ServiceState;
-use chrono::Utc;
-use kameo::Actor;
-use std::time::Instant;
 use tracing::info;
 
 /// Root station actor - supervises all subsystems
 #[derive(kameo::Actor)]
 pub struct StationActor {
     name: String,
+    #[allow(dead_code)]
     pubsub: Option<kameo::actor::ActorRef<PubSubBroker>>,
 }
 

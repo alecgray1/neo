@@ -1,7 +1,6 @@
 use crate::messages::{Event, PubSubMsg};
 use crate::types::Result;
 use dashmap::DashMap;
-use kameo::Actor;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tracing::{debug, trace};
@@ -126,7 +125,7 @@ impl kameo::message::Message<PubSubMsg> for PubSubBroker {
 
             PubSubMsg::Subscribe {
                 topic_pattern,
-                subscriber_id,
+                subscriber_id: _,
             } => {
                 let _receiver = self.subscribe(&topic_pattern);
                 // In a real implementation, we'd track the subscriber_id
@@ -135,8 +134,8 @@ impl kameo::message::Message<PubSubMsg> for PubSubBroker {
             }
 
             PubSubMsg::Unsubscribe {
-                topic_pattern,
-                subscriber_id,
+                topic_pattern: _,
+                subscriber_id: _,
             } => {
                 // TODO: Implement unsubscribe
                 PubSubReply::Unsubscribed

@@ -1,12 +1,12 @@
 use crate::actors::PubSubBroker;
-use crate::actors::bacnet::device::{BACnetDeviceActor, DeviceReply};
+use crate::actors::bacnet::device::BACnetDeviceActor;
 use crate::actors::bacnet::io::BACnetIOActor;
 use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, NetworkMsg};
 use dashmap::DashMap;
 use kameo::actor::Spawn;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
-use tokio::time::{Duration, interval};
+use tokio::time::Duration;
 use tracing::{debug, info, warn};
 
 /// Represents a BACnet network that manages multiple devices
@@ -108,7 +108,7 @@ impl BACnetNetworkActor {
             ));
 
             // Link the device actor to the network actor (supervision tree)
-            network_actor_ref.link(&device);
+            let _ = network_actor_ref.link(&device).await;
             debug!("Linked device {} to network {} for supervision", device_name, self.network_name);
 
             self.devices.insert(device_name.clone(), device.clone());
@@ -221,52 +221,6 @@ impl BACnetNetworkActor {
                 }
             }
         })
-    }
-
-    /// Start background polling task (old version - to be removed)
-    #[allow(dead_code)]
-    async fn start_polling_old(&self, actor_ref: kameo::actor::WeakActorRef<Self>) {
-        let poll_interval = self.poll_interval_secs;
-        let devices = self.devices.clone();
-        let network_name = self.network_name.clone();
-
-        tokio::spawn(async move {
-            let mut tick = interval(Duration::from_secs(poll_interval));
-
-            loop {
-                tick.tick().await;
-
-                // Check if actor still exists
-                if actor_ref.upgrade().is_none() {
-                    debug!("BACnet network {} polling task exiting", network_name);
-                    break;
-                }
-
-                debug!(
-                    "Polling {} devices on network {}",
-                    devices.len(),
-                    network_name
-                );
-
-                // Poll all devices
-                for device_entry in devices.iter() {
-                    let device_name = device_entry.key();
-                    let device_ref = device_entry.value();
-
-                    match device_ref.ask(DeviceMsg::Poll).await {
-                        Ok(DeviceReply::Polled) => {
-                            debug!("Successfully polled device {}", device_name);
-                        }
-                        Err(e) => {
-                            warn!("Failed to poll device {}: {}", device_name, e);
-                        }
-                        _ => {
-                            warn!("Unexpected reply from device {}", device_name);
-                        }
-                    }
-                }
-            }
-        });
     }
 
     /// Start background discovery task
@@ -549,13 +503,6 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             NetworkMsg::GetDiscoveryInterval => {
                 NetworkReply::DiscoveryInterval(self.discovery_interval_secs)
             }
-
-            // BACnet I/O operations are now handled by dedicated BACnetIOActor
-            // Devices communicate directly with I/O actor for reads/writes
-            NetworkMsg::ReadProperty { .. } | NetworkMsg::WriteProperty { .. } => {
-                warn!("ReadProperty/WriteProperty messages should be sent directly to BACnetIOActor, not NetworkActor");
-                NetworkReply::BACnetError("Use BACnetIOActor for I/O operations".to_string())
-            }
         }
     }
 }
@@ -577,9 +524,4 @@ pub enum NetworkReply {
     Success,
     AutoDiscoveryEnabled(bool),
     DiscoveryInterval(u64),
-
-    // Legacy I/O replies (deprecated - use BACnetIOActor directly)
-    PropertyValue(crate::types::PointValue),
-    PropertyWritten,
-    BACnetError(String),
 }
