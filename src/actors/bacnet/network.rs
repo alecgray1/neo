@@ -3,7 +3,8 @@ use crate::actors::bacnet::device::BACnetDeviceActor;
 use crate::actors::bacnet::io::BACnetIOActor;
 use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, Event, NetworkMsg};
 use dashmap::DashMap;
-use kameo::actor::Spawn;
+use kameo::actor::{ActorRef, Spawn};
+use kameo::registry::ACTOR_REGISTRY;
 use kameo_actors::pubsub::Publish;
 use std::net::SocketAddr;
 use std::sync::{Arc, Once};
@@ -14,7 +15,6 @@ use tracing::{debug, info, warn};
 #[derive(kameo::Actor)]
 pub struct BACnetNetworkActor {
     pub network_name: String,
-    pub devices: Arc<DashMap<String, kameo::actor::ActorRef<BACnetDeviceActor>>>,
     pub device_addresses: Arc<DashMap<String, SocketAddr>>,  // Maps device name to network address
     pub poll_interval_secs: u64,
     pub auto_discovery: bool,
@@ -35,7 +35,6 @@ impl BACnetNetworkActor {
 
         Self {
             network_name,
-            devices: Arc::new(DashMap::new()),
             device_addresses: Arc::new(DashMap::new()),
             poll_interval_secs,
             auto_discovery: true,  // Enabled by default
@@ -43,6 +42,11 @@ impl BACnetNetworkActor {
             pubsub: Some(pubsub),
             io_actor,
         }
+    }
+
+    /// Generate a registry key for a device
+    fn device_registry_key(&self, device_name: &str) -> String {
+        format!("bacnet/{}/{}", self.network_name, device_name)
     }
 
     /// Add a device to this network (with optional network address for real BACnet)
@@ -54,8 +58,10 @@ impl BACnetNetworkActor {
         device_address: Option<SocketAddr>,
         network_actor_ref: kameo::actor::ActorRef<BACnetNetworkActor>,
     ) -> crate::types::Result<kameo::actor::ActorRef<BACnetDeviceActor>> {
-        // Check if device already exists
-        if let Some(existing_device) = self.devices.get(&device_name) {
+        let registry_key = self.device_registry_key(&device_name);
+
+        // Check if device already exists in registry
+        if let Ok(Some(existing_device)) = ActorRef::<BACnetDeviceActor>::lookup(registry_key.as_str()) {
             debug!("Device {} already exists, checking if address changed", device_name);
 
             // Update address if different
@@ -71,7 +77,7 @@ impl BACnetNetworkActor {
                 }
             }
 
-            return Ok(existing_device.clone());
+            return Ok(existing_device);
         }
 
         // New device - spawn actor
@@ -112,7 +118,10 @@ impl BACnetNetworkActor {
             let _ = network_actor_ref.link(&device).await;
             debug!("Linked device {} to network {} for supervision", device_name, self.network_name);
 
-            self.devices.insert(device_name.clone(), device.clone());
+            // Register device in the actor registry
+            if let Err(e) = device.register(registry_key) {
+                warn!("Failed to register device {} in registry: {}", device_name, e);
+            }
 
             if let Some(addr) = device_address {
                 self.device_addresses.insert(device_name.clone(), addr);
@@ -372,38 +381,77 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
         ctx: &mut kameo::message::Context<Self, Self::Reply>,
     ) -> Self::Reply {
         match msg {
-            NetworkMsg::GetStatus => NetworkReply::Status {
-                network_name: self.network_name.clone(),
-                device_count: self.devices.len(),
-            },
+            NetworkMsg::GetStatus => {
+                // Count devices in registry for this network
+                let prefix = format!("bacnet/{}/", self.network_name);
+                let device_count = ACTOR_REGISTRY.lock().unwrap()
+                    .names()
+                    .filter(|name| name.starts_with(&prefix))
+                    .count();
+
+                NetworkReply::Status {
+                    network_name: self.network_name.clone(),
+                    device_count,
+                }
+            }
 
             NetworkMsg::ListDevices => {
-                let device_names: Vec<String> =
-                    self.devices.iter().map(|e| e.key().clone()).collect();
+                // List all devices for this network from registry
+                let prefix = format!("bacnet/{}/", self.network_name);
+                let device_names: Vec<String> = ACTOR_REGISTRY.lock().unwrap()
+                    .names()
+                    .filter_map(|name| {
+                        name.strip_prefix(&prefix).map(|s| s.to_string())
+                    })
+                    .collect();
                 NetworkReply::DeviceList(device_names)
             }
 
             NetworkMsg::PollAll => {
-                let device_count = self.devices.len();
+                // Get all device names for this network from registry
+                let prefix = format!("bacnet/{}/", self.network_name);
+                let device_registry_keys: Vec<String> = ACTOR_REGISTRY.lock().unwrap()
+                    .names()
+                    .filter(|name| name.starts_with(&prefix))
+                    .map(|name| name.to_string())
+                    .collect();
+
+                let device_count = device_registry_keys.len();
                 info!("Starting concurrent poll of {} devices", device_count);
 
                 // Spawn concurrent polling tasks (no deadlock!)
                 let mut tasks = Vec::new();
 
-                for device_entry in self.devices.iter() {
-                    let device_name = device_entry.key().clone();
-                    let device_ref = device_entry.value().clone();
+                for registry_key in device_registry_keys {
+                    // Extract device name from registry key
+                    let device_name = registry_key
+                        .strip_prefix(&prefix)
+                        .unwrap_or(&registry_key)
+                        .to_string();
 
                     // Spawn a task for each device
                     let task = tokio::spawn(async move {
-                        debug!("Polling device {}", device_name);
-                        match device_ref.tell(DeviceMsg::Poll).await {
-                            Ok(_) => {
-                                debug!("Device {} poll initiated", device_name);
-                                Ok(())
+                        // Lookup device from registry
+                        match ActorRef::<BACnetDeviceActor>::lookup(registry_key.as_str()) {
+                            Ok(Some(device_ref)) => {
+                                debug!("Polling device {}", device_name);
+                                match device_ref.tell(DeviceMsg::Poll).await {
+                                    Ok(_) => {
+                                        debug!("Device {} poll initiated", device_name);
+                                        Ok(())
+                                    }
+                                    Err(e) => {
+                                        warn!("Failed to send poll to device {}: {}", device_name, e);
+                                        Err(())
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                warn!("Device {} not found in registry", device_name);
+                                Err(())
                             }
                             Err(e) => {
-                                warn!("Failed to send poll to device {}: {}", device_name, e);
+                                warn!("Failed to lookup device {}: {}", device_name, e);
                                 Err(())
                             }
                         }
@@ -415,7 +463,7 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                 // Wait for all polling tasks to complete
                 let results = futures::future::join_all(tasks).await;
 
-                let polled = results.iter().filter(|r| r.is_ok()).count();
+                let polled = results.iter().filter(|r| matches!(r, Ok(Ok(_)))).count();
                 let failed = device_count - polled;
 
                 info!("Poll complete: {} initiated, {} failed to initiate", polled, failed);
@@ -465,7 +513,10 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             }
 
             NetworkMsg::GetDevice { device_name } => {
-                let device = self.devices.get(&device_name).map(|d| d.clone());
+                let registry_key = self.device_registry_key(&device_name);
+                let device = ActorRef::<BACnetDeviceActor>::lookup(registry_key.as_str())
+                    .ok()
+                    .flatten();
                 NetworkReply::Device(device)
             }
 
