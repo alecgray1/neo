@@ -23,6 +23,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@xyflow/svelte": "^1.4.2",
     "electron-store": "^8.1.0",
     "electron-updater": "^6.3.9",
     "paneforge": "^1.0.2"

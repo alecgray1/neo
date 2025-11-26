@@ -30,6 +30,8 @@ function createDocumentStore() {
   }
 
   function getLanguageFromUri(uri: string): string {
+    // Blueprint files must be checked before generic .json
+    if (uri.endsWith('.blueprint.json')) return 'blueprint'
     if (uri.endsWith('.json')) return 'json'
     if (uri.endsWith('.ts') || uri.endsWith('.tsx')) return 'typescript'
     if (uri.endsWith('.js') || uri.endsWith('.jsx')) return 'javascript'

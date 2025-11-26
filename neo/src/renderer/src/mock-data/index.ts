@@ -18,6 +18,10 @@ import holidays from './schedules/holidays.json'
 import network from './config/network.json'
 import system from './config/system.json'
 
+// Blueprints
+import temperatureAlert from './blueprints/temperature-alert.blueprint.json'
+import hvacSequence from './blueprints/hvac-sequence.blueprint.json'
+
 export const mockData = {
   devices: {
     'vav-101': vav101,
@@ -36,6 +40,10 @@ export const mockData = {
   config: {
     network: network,
     system: system
+  },
+  blueprints: {
+    'temperature-alert': temperatureAlert,
+    'hvac-sequence': hvacSequence
   }
 }
 
@@ -44,8 +52,8 @@ export interface MockFile {
   uri: string
   name: string
   path: string
-  type: 'json'
-  category: 'devices' | 'points' | 'schedules' | 'config'
+  type: 'json' | 'blueprint'
+  category: 'devices' | 'points' | 'schedules' | 'config' | 'blueprints'
 }
 
 export const mockFiles: MockFile[] = [
@@ -62,14 +70,18 @@ export const mockFiles: MockFile[] = [
   { uri: 'mock://schedules/holidays.json', name: 'holidays.json', path: 'schedules/holidays.json', type: 'json', category: 'schedules' },
   // Config
   { uri: 'mock://config/network.json', name: 'network.json', path: 'config/network.json', type: 'json', category: 'config' },
-  { uri: 'mock://config/system.json', name: 'system.json', path: 'config/system.json', type: 'json', category: 'config' }
+  { uri: 'mock://config/system.json', name: 'system.json', path: 'config/system.json', type: 'json', category: 'config' },
+  // Blueprints
+  { uri: 'mock://blueprints/temperature-alert.blueprint.json', name: 'temperature-alert.blueprint.json', path: 'blueprints/temperature-alert.blueprint.json', type: 'blueprint', category: 'blueprints' },
+  { uri: 'mock://blueprints/hvac-sequence.blueprint.json', name: 'hvac-sequence.blueprint.json', path: 'blueprints/hvac-sequence.blueprint.json', type: 'blueprint', category: 'blueprints' }
 ]
 
 // Helper to get content by URI
 export function getMockContent(uri: string): unknown | null {
   const path = uri.replace('mock://', '')
   const [category, filename] = path.split('/')
-  const key = filename.replace('.json', '')
+  // Handle .blueprint.json files
+  const key = filename.replace('.blueprint.json', '').replace('.json', '')
 
   const categoryData = mockData[category as keyof typeof mockData]
   if (!categoryData) return null

@@ -2,6 +2,7 @@
   import { documentStore } from '$lib/stores/documents.svelte'
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
   import JsonViewer from './JsonViewer.svelte'
+  import BlueprintEditor from '../../blueprint/BlueprintEditor.svelte'
   import { FileText, ChevronRight } from '@lucide/svelte'
 
   interface Props {
@@ -18,6 +19,13 @@
     const path = uri.replace('mock://', '')
     return path.split('/')
   })
+
+  // Handle content changes from editors
+  function handleContentChange(newContent: string) {
+    if (document) {
+      documentStore.updateContent(uri, newContent)
+    }
+  }
 </script>
 
 <div class="editor-content h-full flex flex-col" style="background: var(--neo-editor-background);">
@@ -42,16 +50,23 @@
     </div>
 
     <!-- Content -->
-    <ScrollArea class="flex-1">
-      <div class="content-wrapper" style="color: var(--neo-editor-foreground);">
-        {#if document.language === 'json'}
-          <JsonViewer content={document.content} />
-        {:else}
-          <!-- Plain text fallback -->
-          <pre class="p-4 text-sm font-mono whitespace-pre-wrap">{document.content}</pre>
-        {/if}
+    {#if document.language === 'blueprint'}
+      <!-- Blueprint editor takes full area (handles its own panning) -->
+      <div class="flex-1 overflow-hidden">
+        <BlueprintEditor content={document.content} onchange={handleContentChange} />
       </div>
-    </ScrollArea>
+    {:else}
+      <ScrollArea class="flex-1">
+        <div class="content-wrapper" style="color: var(--neo-editor-foreground);">
+          {#if document.language === 'json'}
+            <JsonViewer content={document.content} />
+          {:else}
+            <!-- Plain text fallback -->
+            <pre class="p-4 text-sm font-mono whitespace-pre-wrap">{document.content}</pre>
+          {/if}
+        </div>
+      </ScrollArea>
+    {/if}
 
     <!-- Status info -->
     <div
