@@ -30,6 +30,10 @@ function createDocumentStore() {
   }
 
   function getLanguageFromUri(uri: string): string {
+    // Special URIs for built-in editors
+    if (uri.startsWith('keybindings://')) return 'keybindings'
+    if (uri.startsWith('settings://')) return 'settings'
+
     // Blueprint files must be checked before generic .json
     if (uri.endsWith('.blueprint.json')) return 'blueprint'
     if (uri.endsWith('.json')) return 'json'
@@ -73,7 +77,14 @@ function createDocumentStore() {
       let content: string | null = null
       let name = uri.split('/').pop() ?? 'untitled'
 
-      if (uri.startsWith('mock://')) {
+      // Special URIs for built-in editors (no content needed)
+      if (uri.startsWith('keybindings://')) {
+        content = '' // Empty content, editor handles its own data
+        name = 'Keyboard Shortcuts'
+      } else if (uri.startsWith('settings://')) {
+        content = ''
+        name = 'Settings'
+      } else if (uri.startsWith('mock://')) {
         content = getMockContentString(uri)
         const mockFile = mockFiles.find((f) => f.uri === uri)
         if (mockFile) {

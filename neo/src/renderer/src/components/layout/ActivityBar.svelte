@@ -1,7 +1,10 @@
 <script lang="ts">
   import { layoutStore } from '$lib/stores/layout.svelte'
   import * as Tooltip from '$lib/components/ui/tooltip'
-  import { Files, Search, GitBranch, Package, Settings, Bug } from '@lucide/svelte'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
+  import { Files, Search, GitBranch, Package, Settings, Bug, Keyboard } from '@lucide/svelte'
+  import { documentStore } from '$lib/stores/documents.svelte'
+  import { editorStore } from '$lib/stores/editor.svelte'
 
   const activities = [
     { id: 'explorer', icon: Files, label: 'Explorer' },
@@ -10,6 +13,30 @@
     { id: 'debug', icon: Bug, label: 'Run and Debug' },
     { id: 'extensions', icon: Package, label: 'Extensions' }
   ]
+
+  async function openKeybindings() {
+    const uri = 'keybindings://shortcuts'
+    const doc = await documentStore.open(uri)
+    if (doc) {
+      editorStore.openTab({
+        title: 'Keyboard Shortcuts',
+        uri: doc.uri,
+        isPreview: false
+      })
+    }
+  }
+
+  async function openSettings() {
+    const uri = 'settings://preferences'
+    const doc = await documentStore.open(uri)
+    if (doc) {
+      editorStore.openTab({
+        title: 'Settings',
+        uri: doc.uri,
+        isPreview: false
+      })
+    }
+  }
 </script>
 
 <div
@@ -41,16 +68,26 @@
 
   <div class="flex-1"></div>
 
-  <Tooltip.Root>
-    <Tooltip.Trigger>
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger>
       <button class="activity-item w-12 h-12 flex items-center justify-center transition-colors">
         <Settings class="w-6 h-6" />
       </button>
-    </Tooltip.Trigger>
-    <Tooltip.Content side="right">
-      <p>Settings</p>
-    </Tooltip.Content>
-  </Tooltip.Root>
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content side="right" align="end" class="w-56">
+      <DropdownMenu.Item onclick={openKeybindings}>
+        <Keyboard class="w-4 h-4 mr-2" />
+        Keyboard Shortcuts
+        <DropdownMenu.Shortcut>Ctrl+Shift+K</DropdownMenu.Shortcut>
+      </DropdownMenu.Item>
+      <DropdownMenu.Separator />
+      <DropdownMenu.Item onclick={openSettings}>
+        <Settings class="w-4 h-4 mr-2" />
+        Settings
+        <DropdownMenu.Shortcut>Ctrl+,</DropdownMenu.Shortcut>
+      </DropdownMenu.Item>
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
 </div>
 
 <style>

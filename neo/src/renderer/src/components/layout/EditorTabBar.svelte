@@ -82,6 +82,7 @@
 <style>
   .editor-tab-bar {
     scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar) transparent;
   }
 
   .editor-tab-bar::-webkit-scrollbar {
@@ -89,8 +90,12 @@
   }
 
   .editor-tab-bar::-webkit-scrollbar-thumb {
-    background: var(--neo-scrollbar-thumb);
+    background: var(--scrollbar);
     border-radius: 2px;
+  }
+
+  .editor-tab-bar::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-hover);
   }
 
   .editor-tab-bar.drag-over {

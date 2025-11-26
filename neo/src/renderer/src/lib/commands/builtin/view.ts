@@ -3,6 +3,8 @@
 import type { ICommand } from '../types'
 import { layoutStore } from '$lib/stores/layout.svelte'
 import { quickAccessStore } from '../../../components/quickaccess/store.svelte'
+import { documentStore } from '$lib/stores/documents.svelte'
+import { editorStore } from '$lib/stores/editor.svelte'
 
 export const viewCommands: ICommand[] = [
   {
@@ -119,6 +121,46 @@ export const viewCommands: ICommand[] = [
     category: 'View',
     handler: () => {
       quickAccessStore.show('?')
+    }
+  },
+  {
+    id: 'neo.preferences.openKeybindings',
+    title: 'Open Keyboard Shortcuts',
+    category: 'Preferences',
+    keybinding: {
+      key: 'ctrl+shift+k',
+      mac: 'cmd+shift+k'
+    },
+    handler: async () => {
+      const uri = 'keybindings://shortcuts'
+      const doc = await documentStore.open(uri)
+      if (doc) {
+        editorStore.openTab({
+          title: 'Keyboard Shortcuts',
+          uri: doc.uri,
+          isPreview: false
+        })
+      }
+    }
+  },
+  {
+    id: 'neo.preferences.openSettings',
+    title: 'Open Settings',
+    category: 'Preferences',
+    keybinding: {
+      key: 'ctrl+,',
+      mac: 'cmd+,'
+    },
+    handler: async () => {
+      const uri = 'settings://preferences'
+      const doc = await documentStore.open(uri)
+      if (doc) {
+        editorStore.openTab({
+          title: 'Settings',
+          uri: doc.uri,
+          isPreview: false
+        })
+      }
     }
   }
 ]

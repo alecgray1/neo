@@ -61,7 +61,10 @@ function applyTheme(theme: Theme): void {
     '--sidebar-accent': theme.colors['list.hoverBackground'],
     '--sidebar-accent-foreground': theme.colors.foreground,
     '--sidebar-border': theme.colors['sideBar.border'] || theme.colors.border,
-    '--sidebar-ring': theme.colors.focusBorder
+    '--sidebar-ring': theme.colors.focusBorder,
+    '--scrollbar': theme.colors['scrollbar.thumb'],
+    '--scrollbar-hover': theme.colors['scrollbar.thumbHover'],
+    '--scrollbar-active': theme.colors['scrollbar.thumbHover']
   }
 
   // Apply shadcn mappings

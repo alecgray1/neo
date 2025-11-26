@@ -3,6 +3,8 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
   import JsonViewer from './JsonViewer.svelte'
   import BlueprintEditor from '../../blueprint/BlueprintEditor.svelte'
+  import KeybindingsEditor from '../../keybindings/KeybindingsEditor.svelte'
+  import SettingsEditor from '../../settings/SettingsEditor.svelte'
   import { FileText, ChevronRight } from '@lucide/svelte'
 
   interface Props {
@@ -50,7 +52,17 @@
     </div>
 
     <!-- Content -->
-    {#if document.language === 'blueprint'}
+    {#if document.language === 'settings'}
+      <!-- Settings editor -->
+      <div class="flex-1 overflow-hidden">
+        <SettingsEditor />
+      </div>
+    {:else if document.language === 'keybindings'}
+      <!-- Keybindings editor -->
+      <div class="flex-1 overflow-hidden">
+        <KeybindingsEditor />
+      </div>
+    {:else if document.language === 'blueprint'}
       <!-- Blueprint editor takes full area (handles its own panning) -->
       <div class="flex-1 overflow-hidden">
         <BlueprintEditor content={document.content} onchange={handleContentChange} />
@@ -68,21 +80,23 @@
       </ScrollArea>
     {/if}
 
-    <!-- Status info -->
-    <div
-      class="status-info flex items-center gap-4 px-4 h-[22px] text-xs shrink-0"
-      style="background: var(--neo-editorWidget-background); border-top: 1px solid var(--neo-editorGroupHeader-tabsBorder);"
-    >
-      <span style="color: var(--neo-descriptionForeground);">
-        {document.language.toUpperCase()}
-      </span>
-      <span style="color: var(--neo-descriptionForeground);">
-        {document.metadata.lineCount} lines
-      </span>
-      {#if document.metadata.isLargeFile}
-        <span class="text-yellow-500">Large file</span>
-      {/if}
-    </div>
+    <!-- Status info (hide for special editors) -->
+    {#if document.language !== 'settings' && document.language !== 'keybindings'}
+      <div
+        class="status-info flex items-center gap-4 px-4 h-[22px] text-xs shrink-0"
+        style="background: var(--neo-editorWidget-background); border-top: 1px solid var(--neo-editorGroupHeader-tabsBorder);"
+      >
+        <span style="color: var(--neo-descriptionForeground);">
+          {document.language.toUpperCase()}
+        </span>
+        <span style="color: var(--neo-descriptionForeground);">
+          {document.metadata.lineCount} lines
+        </span>
+        {#if document.metadata.isLargeFile}
+          <span class="text-yellow-500">Large file</span>
+        {/if}
+      </div>
+    {/if}
   {:else}
     <!-- Loading or not found state -->
     <div class="h-full flex items-center justify-center">

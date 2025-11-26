@@ -40,6 +40,8 @@ export function startKeybindingListener(): IDisposable {
         'neo.view.togglePanel',
         'neo.file.save',
         'neo.file.saveAll',
+        'neo.preferences.openKeybindings',
+        'neo.preferences.openSettings',
       ]
 
       if (isInput && !globalCommands.includes(match.commandId)) {
