@@ -1,0 +1,75 @@
+{
+  "id": "temperature-alert",
+  "name": "Temperature Alert Blueprint",
+  "version": "1.0.0",
+  "description": "Monitors temperature and logs an alert when it exceeds threshold",
+  "variables": {
+    "threshold": {
+      "type": { "type": "Real" },
+      "default": 80.0,
+      "description": "Temperature threshold in degrees"
+    }
+  },
+  "nodes": [
+    {
+      "id": "event",
+      "type": "neo/OnEvent",
+      "position": { "x": 0, "y": 0 },
+      "config": {
+        "event_type": "temperature_changed"
+      }
+    },
+    {
+      "id": "get_threshold",
+      "type": "neo/GetVariable",
+      "position": { "x": 200, "y": 100 },
+      "config": {
+        "variable": "threshold"
+      }
+    },
+    {
+      "id": "compare",
+      "type": "neo/Compare",
+      "position": { "x": 200, "y": 0 },
+      "config": {
+        "operator": ">"
+      }
+    },
+    {
+      "id": "branch",
+      "type": "neo/Branch",
+      "position": { "x": 400, "y": 0 },
+      "config": {}
+    },
+    {
+      "id": "log_high",
+      "type": "neo/Log",
+      "position": { "x": 600, "y": -50 },
+      "config": {
+        "level": "warn",
+        "defaults": {
+          "message": "ALERT: Temperature exceeded threshold!"
+        }
+      }
+    },
+    {
+      "id": "log_normal",
+      "type": "neo/Log",
+      "position": { "x": 600, "y": 50 },
+      "config": {
+        "level": "info",
+        "defaults": {
+          "message": "Temperature is within normal range"
+        }
+      }
+    }
+  ],
+  "connections": [
+    { "from": "event.exec", "to": "branch.exec" },
+    { "from": "event.value", "to": "compare.a" },
+    { "from": "get_threshold.value", "to": "compare.b" },
+    { "from": "compare.result", "to": "branch.condition" },
+    { "from": "branch.true", "to": "log_high.exec" },
+    { "from": "branch.false", "to": "log_normal.exec" }
+  ]
+}

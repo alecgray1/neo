@@ -224,6 +224,48 @@ pub fn op_neo_now_ms() -> f64 {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Blueprint Ops
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Blueprint node info for JS
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct JsNodeInfo {
+    pub id: String,
+    pub name: String,
+    pub category: String,
+    pub pure: bool,
+    pub latent: bool,
+    pub description: Option<String>,
+}
+
+/// List all available blueprint nodes
+#[op2]
+#[serde]
+pub fn op_neo_blueprint_list_nodes(_state: &OpState) -> Vec<JsNodeInfo> {
+    use crate::blueprints::NodeRegistry;
+
+    let registry = NodeRegistry::with_builtins();
+    registry.definitions().map(|def| JsNodeInfo {
+        id: def.id.clone(),
+        name: def.name.clone(),
+        category: def.category.clone(),
+        pure: def.pure,
+        latent: def.latent,
+        description: def.description.clone(),
+    }).collect()
+}
+
+/// Get categories of blueprint nodes
+#[op2]
+#[serde]
+pub fn op_neo_blueprint_get_categories(_state: &OpState) -> Vec<String> {
+    use crate::blueprints::NodeRegistry;
+
+    let registry = NodeRegistry::with_builtins();
+    registry.categories()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Extension Definition
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -240,6 +282,8 @@ deno_core::extension!(
         op_neo_point_read,
         op_neo_point_write,
         op_neo_now_ms,
+        op_neo_blueprint_list_nodes,
+        op_neo_blueprint_get_categories,
     ],
 );
 

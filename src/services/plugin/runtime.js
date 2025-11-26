@@ -72,6 +72,36 @@
              */
             now: () => core.ops.op_neo_now_ms(),
         },
+
+        // Blueprint operations
+        blueprints: {
+            /**
+             * List all available blueprint nodes
+             * @returns {NodeInfo[]} Array of node definitions
+             */
+            listNodes: () => core.ops.op_neo_blueprint_list_nodes(),
+
+            /**
+             * Get all node categories
+             * @returns {string[]} Array of category names
+             */
+            getCategories: () => core.ops.op_neo_blueprint_get_categories(),
+
+            /**
+             * Trigger a blueprint event
+             * This publishes an event that blueprints can listen to
+             * @param {string} eventType - Type of event
+             * @param {object} data - Event data
+             */
+            triggerEvent: (eventType, data = {}) => {
+                core.ops.op_neo_event_publish({
+                    type: "Custom",
+                    event_type: eventType,
+                    source: Neo.pluginId,
+                    data: data,
+                });
+            },
+        },
     };
 
     // ─────────────────────────────────────────────────────────────────────────

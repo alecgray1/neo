@@ -3,6 +3,7 @@
 
 pub mod actors;
 pub mod api;
+pub mod blueprints;
 pub mod config;
 pub mod messages;
 pub mod protocols;
