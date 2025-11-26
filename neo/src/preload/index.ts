@@ -18,6 +18,30 @@ const themeAPI = {
   }
 }
 
+// Layout API for renderer
+const layoutAPI = {
+  getLayout: (): Promise<unknown> => ipcRenderer.invoke('layout:get'),
+  setLayout: (layout: unknown): Promise<void> => ipcRenderer.invoke('layout:set', layout),
+  resetLayout: (): Promise<void> => ipcRenderer.invoke('layout:reset')
+}
+
+// Window API for custom window controls
+const windowAPI = {
+  minimize: (): Promise<void> => ipcRenderer.invoke('window:minimize'),
+  maximize: (): Promise<void> => ipcRenderer.invoke('window:maximize'),
+  close: (): Promise<void> => ipcRenderer.invoke('window:close'),
+  isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+  isMac: (): Promise<boolean> => ipcRenderer.invoke('window:isMac'),
+  onMaximizedChange: (callback: (maximized: boolean) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, maximized: boolean): void =>
+      callback(maximized)
+    ipcRenderer.on('window:maximized-change', handler)
+    return (): void => {
+      ipcRenderer.removeListener('window:maximized-change', handler)
+    }
+  }
+}
+
 // Use `contextBridge` APIs to expose Electron APIs to
 // renderer only if context isolation is enabled, otherwise
 // just add to the DOM global.
@@ -26,6 +50,8 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('electron', electronAPI)
     contextBridge.exposeInMainWorld('api', api)
     contextBridge.exposeInMainWorld('themeAPI', themeAPI)
+    contextBridge.exposeInMainWorld('layoutAPI', layoutAPI)
+    contextBridge.exposeInMainWorld('windowAPI', windowAPI)
   } catch (error) {
     console.error(error)
   }
@@ -36,4 +62,8 @@ if (process.contextIsolated) {
   window.api = api
   // @ts-ignore (define in dts)
   window.themeAPI = themeAPI
+  // @ts-ignore (define in dts)
+  window.layoutAPI = layoutAPI
+  // @ts-ignore (define in dts)
+  window.windowAPI = windowAPI
 }

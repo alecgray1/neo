@@ -3,14 +3,21 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { themeService } from './services/ThemeService'
+import { layoutService } from './services/LayoutService'
+
+const isMac = process.platform === 'darwin'
 
 function createWindow(): BrowserWindow {
-  // Create the browser window.
+  // Create the browser window with platform-specific frameless settings
   const mainWindow = new BrowserWindow({
-    width: 900,
-    height: 670,
+    width: 1200,
+    height: 800,
     show: false,
     autoHideMenuBar: true,
+    // Platform-specific frameless window settings (like VS Code)
+    frame: isMac, // Keep frame on macOS for native traffic lights
+    titleBarStyle: isMac ? 'hiddenInset' : undefined,
+    trafficLightPosition: isMac ? { x: 10, y: 10 } : undefined,
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -60,9 +67,29 @@ app.whenReady().then(() => {
   themeService.registerIPC()
   themeService.startWatching()
 
+  // Initialize layout service
+  layoutService.registerIPC()
+
   // Create window and connect to theme service
   const mainWindow = createWindow()
   themeService.setMainWindow(mainWindow)
+
+  // Window control IPC handlers
+  ipcMain.handle('window:minimize', () => mainWindow.minimize())
+  ipcMain.handle('window:maximize', () => {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize()
+    } else {
+      mainWindow.maximize()
+    }
+  })
+  ipcMain.handle('window:close', () => mainWindow.close())
+  ipcMain.handle('window:isMaximized', () => mainWindow.isMaximized())
+  ipcMain.handle('window:isMac', () => isMac)
+
+  // Notify renderer of maximize state changes
+  mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized-change', true))
+  mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-change', false))
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

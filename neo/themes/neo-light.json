@@ -8,10 +8,29 @@
     "primary": "#007acc",
     "primaryForeground": "#ffffff",
 
-    "titleBar.background": "#dddddd",
-    "titleBar.foreground": "#333333",
+    "titleBar.activeBackground": "#dddddd",
+    "titleBar.activeForeground": "#333333",
     "titleBar.inactiveBackground": "#e8e8e8",
     "titleBar.inactiveForeground": "#999999",
+    "titleBar.border": "#e0e0e0",
+
+    "menubar.selectionForeground": "#333333",
+    "menubar.selectionBackground": "#d4d4d4",
+    "menu.foreground": "#333333",
+    "menu.background": "#ffffff",
+    "menu.selectionForeground": "#ffffff",
+    "menu.selectionBackground": "#0060c0",
+    "menu.separatorBackground": "#e0e0e0",
+    "menu.border": "#cecece",
+
+    "commandCenter.background": "#ffffff",
+    "commandCenter.foreground": "#333333",
+    "commandCenter.border": "#cecece",
+    "commandCenter.activeBackground": "#e8e8e8",
+    "commandCenter.activeForeground": "#333333",
+    "commandCenter.activeBorder": "#007acc",
+
+    "toolbar.hoverBackground": "#e8e8e8",
 
     "sideBar.background": "#f3f3f3",
     "sideBar.foreground": "#333333",
@@ -66,6 +85,30 @@
     "error": "#e51400",
     "warning": "#bf8803",
     "info": "#1a85ff",
-    "success": "#388a34"
+    "success": "#388a34",
+
+    "editorGroup.border": "#e0e0e0",
+    "editorGroupHeader.tabsBackground": "#f3f3f3",
+    "editorGroupHeader.tabsBorder": "#e0e0e0",
+
+    "tab.activeBackground": "#ffffff",
+    "tab.activeForeground": "#333333",
+    "tab.inactiveBackground": "#ececec",
+    "tab.inactiveForeground": "#6e6e6e",
+    "tab.border": "#f3f3f3",
+    "tab.activeBorder": "#ffffff",
+    "tab.activeBorderTop": "#007acc",
+    "tab.hoverBackground": "#e8e8e8",
+    "tab.unfocusedActiveBackground": "#ffffff",
+    "tab.unfocusedActiveForeground": "#6e6e6e",
+    "tab.dragAndDropBorder": "#007acc",
+
+    "sideBarSectionHeader.background": "#e8e8e8",
+    "sideBarSectionHeader.foreground": "#333333",
+    "sideBarSectionHeader.border": "#e0e0e0",
+
+    "panelTitle.activeBorder": "#007acc",
+    "panelTitle.activeForeground": "#333333",
+    "panelTitle.inactiveForeground": "#6e6e6e"
   }
 }

@@ -75,10 +75,40 @@ export interface ThemeAPI {
   onThemeChanged(callback: (theme: Theme) => void): () => void
 }
 
+// Layout types
+export type PanelPosition = 'bottom' | 'top' | 'left' | 'right'
+
+export interface LayoutConfig {
+  primarySidebarVisible: boolean
+  auxiliaryBarVisible: boolean
+  panelVisible: boolean
+  panelPosition: PanelPosition
+  activeActivityItem: string | null
+  activePanelTab: string
+}
+
+export interface LayoutAPI {
+  getLayout(): Promise<LayoutConfig>
+  setLayout(layout: Partial<LayoutConfig>): Promise<void>
+  resetLayout(): Promise<void>
+}
+
+// Window control types
+export interface WindowAPI {
+  minimize(): Promise<void>
+  maximize(): Promise<void>
+  close(): Promise<void>
+  isMaximized(): Promise<boolean>
+  isMac(): Promise<boolean>
+  onMaximizedChange(callback: (maximized: boolean) => void): () => void
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
     api: unknown
     themeAPI: ThemeAPI
+    layoutAPI: LayoutAPI
+    windowAPI: WindowAPI
   }
 }

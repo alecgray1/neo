@@ -8,10 +8,29 @@
     "primary": "#007acc",
     "primaryForeground": "#ffffff",
 
-    "titleBar.background": "#323233",
-    "titleBar.foreground": "#cccccc",
-    "titleBar.inactiveBackground": "#2d2d2d",
-    "titleBar.inactiveForeground": "#999999",
+    "titleBar.activeBackground": "#3c3c3c",
+    "titleBar.activeForeground": "#cccccc",
+    "titleBar.inactiveBackground": "#3c3c3c",
+    "titleBar.inactiveForeground": "#969696",
+    "titleBar.border": "#3c3c3c",
+
+    "menubar.selectionForeground": "#ffffff",
+    "menubar.selectionBackground": "#505050",
+    "menu.foreground": "#cccccc",
+    "menu.background": "#252526",
+    "menu.selectionForeground": "#ffffff",
+    "menu.selectionBackground": "#094771",
+    "menu.separatorBackground": "#454545",
+    "menu.border": "#454545",
+
+    "commandCenter.background": "#3c3c3c",
+    "commandCenter.foreground": "#cccccc",
+    "commandCenter.border": "#454545",
+    "commandCenter.activeBackground": "#505050",
+    "commandCenter.activeForeground": "#ffffff",
+    "commandCenter.activeBorder": "#007acc",
+
+    "toolbar.hoverBackground": "#505050",
 
     "sideBar.background": "#252526",
     "sideBar.foreground": "#cccccc",
@@ -66,6 +85,30 @@
     "error": "#f14c4c",
     "warning": "#cca700",
     "info": "#3794ff",
-    "success": "#89d185"
+    "success": "#89d185",
+
+    "editorGroup.border": "#444444",
+    "editorGroupHeader.tabsBackground": "#252526",
+    "editorGroupHeader.tabsBorder": "#252526",
+
+    "tab.activeBackground": "#1e1e1e",
+    "tab.activeForeground": "#ffffff",
+    "tab.inactiveBackground": "#2d2d2d",
+    "tab.inactiveForeground": "#969696",
+    "tab.border": "#252526",
+    "tab.activeBorder": "#1e1e1e",
+    "tab.activeBorderTop": "#007acc",
+    "tab.hoverBackground": "#323232",
+    "tab.unfocusedActiveBackground": "#1e1e1e",
+    "tab.unfocusedActiveForeground": "#969696",
+    "tab.dragAndDropBorder": "#007acc",
+
+    "sideBarSectionHeader.background": "#333333",
+    "sideBarSectionHeader.foreground": "#cccccc",
+    "sideBarSectionHeader.border": "#454545",
+
+    "panelTitle.activeBorder": "#007acc",
+    "panelTitle.activeForeground": "#cccccc",
+    "panelTitle.inactiveForeground": "#969696"
   }
 }
