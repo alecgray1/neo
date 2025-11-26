@@ -15,12 +15,12 @@ use tracing::{debug, info, warn};
 #[derive(kameo::Actor)]
 pub struct BACnetNetworkActor {
     pub network_name: String,
-    pub device_addresses: Arc<DashMap<String, SocketAddr>>,  // Maps device name to network address
+    pub device_addresses: Arc<DashMap<String, SocketAddr>>, // Maps device name to network address
     pub poll_interval_secs: u64,
     pub auto_discovery: bool,
     pub discovery_interval_secs: u64,
     pubsub: Option<kameo::actor::ActorRef<PubSubBroker>>,
-    io_actor: kameo::actor::ActorRef<BACnetIOActor>,  // Reference to I/O actor for BACnet operations
+    io_actor: kameo::actor::ActorRef<BACnetIOActor>, // Reference to I/O actor for BACnet operations
 }
 
 impl BACnetNetworkActor {
@@ -37,8 +37,8 @@ impl BACnetNetworkActor {
             network_name,
             device_addresses: Arc::new(DashMap::new()),
             poll_interval_secs,
-            auto_discovery: true,  // Enabled by default
-            discovery_interval_secs: 60,  // Every 60 seconds
+            auto_discovery: true,        // Enabled by default
+            discovery_interval_secs: 60, // Every 60 seconds
             pubsub: Some(pubsub),
             io_actor,
         }
@@ -61,14 +61,22 @@ impl BACnetNetworkActor {
         let registry_key = self.device_registry_key(&device_name);
 
         // Check if device already exists in registry
-        if let Ok(Some(existing_device)) = ActorRef::<BACnetDeviceActor>::lookup(registry_key.as_str()) {
-            debug!("Device {} already exists, checking if address changed", device_name);
+        if let Ok(Some(existing_device)) =
+            ActorRef::<BACnetDeviceActor>::lookup(registry_key.as_str())
+        {
+            debug!(
+                "Device {} already exists, checking if address changed",
+                device_name
+            );
 
             // Update address if different
             if let Some(addr) = device_address {
                 if let Some(mut stored_addr) = self.device_addresses.get_mut(&device_name) {
                     if *stored_addr != addr {
-                        info!("Device {} address changed from {} to {}", device_name, *stored_addr, addr);
+                        info!(
+                            "Device {} address changed from {} to {}",
+                            device_name, *stored_addr, addr
+                        );
                         *stored_addr = addr;
                         // TODO: In Phase 4, we could trigger reconnection here
                     }
@@ -82,14 +90,21 @@ impl BACnetNetworkActor {
 
         // New device - spawn actor
         if let Some(pubsub) = &self.pubsub {
-            info!("Spawning new device actor for {} (instance {})", device_name, device_instance);
+            info!(
+                "Spawning new device actor for {} (instance {})",
+                device_name, device_instance
+            );
 
             // Use I/O actor to connect to device if we have an address
             if let Some(addr) = device_address {
-                match self.io_actor.ask(BACnetIOMsg::ConnectDevice {
-                    device_id: device_instance,
-                    address: addr,
-                }).await {
+                match self
+                    .io_actor
+                    .ask(BACnetIOMsg::ConnectDevice {
+                        device_id: device_instance,
+                        address: addr,
+                    })
+                    .await
+                {
                     Ok(BACnetIOReply::Connected) => {
                         info!("I/O actor connected to device {} at {}", device_name, addr);
                     }
@@ -116,11 +131,17 @@ impl BACnetNetworkActor {
 
             // Link the device actor to the network actor (supervision tree)
             let _ = network_actor_ref.link(&device).await;
-            debug!("Linked device {} to network {} for supervision", device_name, self.network_name);
+            debug!(
+                "Linked device {} to network {} for supervision",
+                device_name, self.network_name
+            );
 
             // Register device in the actor registry
             if let Err(e) = device.register(registry_key) {
-                warn!("Failed to register device {} in registry: {}", device_name, e);
+                warn!(
+                    "Failed to register device {} in registry: {}",
+                    device_name, e
+                );
             }
 
             if let Some(addr) = device_address {
@@ -156,15 +177,24 @@ impl BACnetNetworkActor {
     }
 
     /// Discover BACnet devices on the network via Who-Is
-    pub async fn discover_devices(&mut self) -> crate::types::Result<Vec<(String, u32, SocketAddr)>> {
-        info!("Scanning for BACnet devices on network {}...", self.network_name);
+    pub async fn discover_devices(
+        &mut self,
+    ) -> crate::types::Result<Vec<(String, u32, SocketAddr)>> {
+        info!(
+            "Scanning for BACnet devices on network {}...",
+            self.network_name
+        );
         info!("Sending Who-Is broadcast via I/O actor...");
 
         // Use I/O actor to perform Who-Is discovery
-        match self.io_actor.ask(BACnetIOMsg::WhoIs {
-            timeout_secs: 3,
-            subnet: None,
-        }).await {
+        match self
+            .io_actor
+            .ask(BACnetIOMsg::WhoIs {
+                timeout_secs: 3,
+                subnet: None,
+            })
+            .await
+        {
             Ok(BACnetIOReply::Devices(devices)) => {
                 info!("Discovered {} BACnet device(s)", devices.len());
                 for (name, instance, addr) in &devices {
@@ -178,7 +208,10 @@ impl BACnetNetworkActor {
             }
             Err(e) => {
                 warn!("Failed to send Who-Is message to I/O actor: {}", e);
-                Err(crate::types::Error::BACnet(format!("I/O actor error: {}", e)))
+                Err(crate::types::Error::BACnet(format!(
+                    "I/O actor error: {}",
+                    e
+                )))
             }
             _ => {
                 warn!("Unexpected reply from I/O actor");
@@ -188,7 +221,9 @@ impl BACnetNetworkActor {
     }
 
     /// Start background polling task
-    pub fn start_polling_task(actor_ref: kameo::actor::ActorRef<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn start_polling_task(
+        actor_ref: kameo::actor::ActorRef<Self>,
+    ) -> tokio::task::JoinHandle<()> {
         let weak_ref = actor_ref.downgrade();
         let actor_clone = actor_ref.clone();
 
@@ -206,7 +241,10 @@ impl BACnetNetworkActor {
             let mut tick = tokio::time::interval(Duration::from_secs(poll_interval));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
-            info!("⏱️  Polling task started for network {}, interval: {}s", network_name, poll_interval);
+            info!(
+                "⏱️  Polling task started for network {}, interval: {}s",
+                network_name, poll_interval
+            );
 
             loop {
                 tick.tick().await;
@@ -232,7 +270,9 @@ impl BACnetNetworkActor {
     }
 
     /// Start background discovery task
-    pub fn start_discovery_task(actor_ref: kameo::actor::ActorRef<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn start_discovery_task(
+        actor_ref: kameo::actor::ActorRef<Self>,
+    ) -> tokio::task::JoinHandle<()> {
         tokio::spawn(async move {
             let weak_ref = actor_ref.downgrade();
 
@@ -329,7 +369,7 @@ fn configure_port() {
         return;
     }
 
-    const DEFAULT_PORT: u16 = 47808;  // BACnet/IP standard port (0xBAC0)
+    const DEFAULT_PORT: u16 = 47808; // BACnet/IP standard port (0xBAC0)
     let mut port = DEFAULT_PORT;
 
     if let Ok(value) = std::env::var("NEO_BACNET_LOCAL_PORT") {
@@ -384,7 +424,9 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             NetworkMsg::GetStatus => {
                 // Count devices in registry for this network
                 let prefix = format!("bacnet/{}/", self.network_name);
-                let device_count = ACTOR_REGISTRY.lock().unwrap()
+                let device_count = ACTOR_REGISTRY
+                    .lock()
+                    .unwrap()
                     .names()
                     .filter(|name| name.starts_with(&prefix))
                     .count();
@@ -398,11 +440,11 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             NetworkMsg::ListDevices => {
                 // List all devices for this network from registry
                 let prefix = format!("bacnet/{}/", self.network_name);
-                let device_names: Vec<String> = ACTOR_REGISTRY.lock().unwrap()
+                let device_names: Vec<String> = ACTOR_REGISTRY
+                    .lock()
+                    .unwrap()
                     .names()
-                    .filter_map(|name| {
-                        name.strip_prefix(&prefix).map(|s| s.to_string())
-                    })
+                    .filter_map(|name| name.strip_prefix(&prefix).map(|s| s.to_string()))
                     .collect();
                 NetworkReply::DeviceList(device_names)
             }
@@ -410,7 +452,9 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
             NetworkMsg::PollAll => {
                 // Get all device names for this network from registry
                 let prefix = format!("bacnet/{}/", self.network_name);
-                let device_registry_keys: Vec<String> = ACTOR_REGISTRY.lock().unwrap()
+                let device_registry_keys: Vec<String> = ACTOR_REGISTRY
+                    .lock()
+                    .unwrap()
                     .names()
                     .filter(|name| name.starts_with(&prefix))
                     .map(|name| name.to_string())
@@ -441,7 +485,10 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                                         Ok(())
                                     }
                                     Err(e) => {
-                                        warn!("Failed to send poll to device {}: {}", device_name, e);
+                                        warn!(
+                                            "Failed to send poll to device {}: {}",
+                                            device_name, e
+                                        );
                                         Err(())
                                     }
                                 }
@@ -466,13 +513,28 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                 let polled = results.iter().filter(|r| matches!(r, Ok(Ok(_)))).count();
                 let failed = device_count - polled;
 
-                info!("Poll complete: {} initiated, {} failed to initiate", polled, failed);
+                info!(
+                    "Poll complete: {} initiated, {} failed to initiate",
+                    polled, failed
+                );
                 NetworkReply::PollResult { polled, failed }
             }
 
-            NetworkMsg::AddDevice { device_name, device_instance, device_address } => {
+            NetworkMsg::AddDevice {
+                device_name,
+                device_instance,
+                device_address,
+            } => {
                 let network_ref = ctx.actor_ref().clone();
-                match self.add_device(device_name.clone(), device_instance, device_address, network_ref).await {
+                match self
+                    .add_device(
+                        device_name.clone(),
+                        device_instance,
+                        device_address,
+                        network_ref,
+                    )
+                    .await
+                {
                     Ok(device_ref) => {
                         // Trigger point discovery in background for real devices
                         if device_address.is_some() {
@@ -482,14 +544,22 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                                 tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
                                 match device_clone.ask(DeviceMsg::DiscoverPoints).await {
-                                    Ok(crate::actors::bacnet::DeviceReply::PointsDiscovered { count }) => {
-                                        info!("Auto-discovered {} points on device {}", count, device_name);
+                                    Ok(crate::actors::bacnet::DeviceReply::PointsDiscovered {
+                                        count,
+                                    }) => {
+                                        info!(
+                                            "Auto-discovered {} points on device {}",
+                                            count, device_name
+                                        );
                                     }
                                     Ok(crate::actors::bacnet::DeviceReply::Failure(e)) => {
                                         warn!("Point discovery failed for {}: {}", device_name, e);
                                     }
                                     Err(e) => {
-                                        warn!("Failed to trigger discovery for {}: {}", device_name, e);
+                                        warn!(
+                                            "Failed to trigger discovery for {}: {}",
+                                            device_name, e
+                                        );
                                     }
                                     _ => {}
                                 }
@@ -520,12 +590,10 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
                 NetworkReply::Device(device)
             }
 
-            NetworkMsg::DiscoverDevices => {
-                match self.discover_devices().await {
-                    Ok(devices) => NetworkReply::DiscoveredDevices(devices),
-                    Err(_) => NetworkReply::DiscoveredDevices(Vec::new()),
-                }
-            }
+            NetworkMsg::DiscoverDevices => match self.discover_devices().await {
+                Ok(devices) => NetworkReply::DiscoveredDevices(devices),
+                Err(_) => NetworkReply::DiscoveredDevices(Vec::new()),
+            },
 
             // Auto-discovery management messages
             NetworkMsg::EnableAutoDiscovery => {
@@ -546,7 +614,10 @@ impl kameo::message::Message<NetworkMsg> for BACnetNetworkActor {
 
             NetworkMsg::SetDiscoveryInterval(secs) => {
                 self.discovery_interval_secs = secs;
-                info!("Discovery interval set to {}s for network {}", secs, self.network_name);
+                info!(
+                    "Discovery interval set to {}s for network {}",
+                    secs, self.network_name
+                );
                 NetworkReply::Success
             }
 

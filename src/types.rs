@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::Instant;
+use ts_rs::TS;
 
 /// BACnet object identifier
 #[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
@@ -44,7 +45,8 @@ impl fmt::Display for ObjectType {
 }
 
 /// Point value types
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub enum PointValue {
     Real(f32),
     Unsigned(u32),
@@ -66,7 +68,8 @@ impl fmt::Display for PointValue {
 }
 
 /// Point quality indicator
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub enum PointQuality {
     Good,
     Bad,
@@ -117,7 +120,8 @@ pub enum DeviceStatus {
 }
 
 /// Alarm severity levels
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub enum AlarmSeverity {
     Low = 0,
     Medium = 1,
@@ -126,13 +130,20 @@ pub enum AlarmSeverity {
 }
 
 /// Service lifecycle states
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "bindings/")]
 pub enum ServiceState {
     Stopped,
     Starting,
     Running,
     Stopping,
     Failed,
+}
+
+impl Default for ServiceState {
+    fn default() -> Self {
+        Self::Stopped
+    }
 }
 
 /// Result type alias

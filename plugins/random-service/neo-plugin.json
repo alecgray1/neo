@@ -1,0 +1,13 @@
+{
+    "id": "random-service",
+    "name": "Random Number Service",
+    "description": "Generates random numbers every 5 seconds",
+    "version": "1.0.0",
+    "main": "src/index.js",
+    "config": {
+        "min": 0,
+        "max": 100,
+        "interval_seconds": 5
+    },
+    "subscriptions": []
+}

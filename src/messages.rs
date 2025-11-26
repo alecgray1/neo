@@ -58,6 +58,19 @@ pub enum Event {
         timestamp: Instant,
         timestamp_utc: DateTime<Utc>,
     },
+
+    /// Custom events from plugins with arbitrary JSON data
+    Custom {
+        /// The custom event type name (e.g., "WeatherUpdated")
+        event_type: String,
+        /// Source plugin/service that published the event
+        source: String,
+        /// Arbitrary JSON data payload
+        data: serde_json::Value,
+        #[serde(skip, default = "Instant::now")]
+        timestamp: Instant,
+        timestamp_utc: DateTime<Utc>,
+    },
 }
 
 /// Station-level messages

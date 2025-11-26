@@ -6,6 +6,7 @@ pub mod api;
 pub mod config;
 pub mod messages;
 pub mod protocols;
+pub mod services;
 pub mod storage;
 pub mod types;
 

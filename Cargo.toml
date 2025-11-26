@@ -51,9 +51,17 @@ dashmap = "6.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 wildmatch = "2.3"
 rand = "0.8"
+parking_lot = "0.12"
+
+# TypeScript type generation
+ts-rs = { version = "10", features = ["chrono-impl", "uuid-impl", "serde-json-impl"] }
+
+# Deno runtime for JS/TS plugins
+deno_core = "0.311"
 
 [dev-dependencies]
 tokio-test = "0.4"
+tempfile = "3.14"
 
 [profile.release]
 opt-level = 3
