@@ -1,10 +1,14 @@
 <script lang="ts">
   import { Search } from '@lucide/svelte'
+  import { quickAccessStore } from '../../quickaccess/store.svelte'
+  import { isMac } from '$lib/keybindings/types'
 
   function openCommandPalette() {
-    // TODO: Implement command palette
-    console.log('Open command palette')
+    quickAccessStore.show('')
   }
+
+  // Show platform-appropriate shortcut
+  const shortcut = isMac() ? '⌘P' : 'Ctrl+P'
 </script>
 
 <button
@@ -20,7 +24,7 @@
 >
   <Search class="w-3.5 h-3.5 opacity-60" />
   <span class="opacity-60 truncate">Search or type a command...</span>
-  <span class="ml-auto opacity-40 text-[10px] hidden sm:inline">Ctrl+P</span>
+  <span class="ml-auto opacity-40 text-[10px] hidden sm:inline">{shortcut}</span>
 </button>
 
 <style>
