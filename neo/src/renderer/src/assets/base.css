@@ -1,0 +1,75 @@
+/*
+ * Neo Theme Variables
+ * These are fallback values - the actual values are set dynamically by the theme system
+ */
+:root {
+  /* Fallback values (dark theme defaults) */
+  --neo-background: #1e1e1e;
+  --neo-foreground: #cccccc;
+  --neo-primary: #007acc;
+  --neo-primaryForeground: #ffffff;
+  --neo-border: #454545;
+  --neo-focusBorder: #007acc;
+
+  --neo-button-background: #0e639c;
+  --neo-button-foreground: #ffffff;
+  --neo-button-hoverBackground: #1177bb;
+  --neo-button-secondaryBackground: #3a3d41;
+  --neo-button-secondaryForeground: #ffffff;
+  --neo-button-secondaryHoverBackground: #45494e;
+
+  --neo-input-background: #3c3c3c;
+  --neo-input-foreground: #cccccc;
+  --neo-input-border: #454545;
+
+  --neo-text-link: #3794ff;
+
+  --neo-error: #f14c4c;
+  --neo-warning: #cca700;
+  --neo-info: #3794ff;
+  --neo-success: #89d185;
+}
+
+/* Theme type variants */
+[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+ul {
+  list-style: none;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--neo-foreground);
+  background: var(--neo-background);
+  line-height: 1.6;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}

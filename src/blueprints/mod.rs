@@ -11,7 +11,7 @@ mod types;
 pub use executor::{BlueprintExecutor, ExecutionContext};
 pub use registry::{NodeExecutor, NodeRegistry};
 pub use service::{
-    BlueprintInfo, BlueprintService, ExecuteBlueprint, GetBlueprint, ListBlueprints,
-    LoadBlueprint, RegisterCustomNode, TriggerEvent, UnloadBlueprint,
+    start_background_tasks, BlueprintInfo, BlueprintService, ExecuteBlueprint, GetBlueprint,
+    ListBlueprints, LoadBlueprint, RegisterCustomNode, TriggerEvent, UnloadBlueprint,
 };
 pub use types::*;

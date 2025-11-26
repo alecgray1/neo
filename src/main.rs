@@ -4,6 +4,7 @@ use kameo::actor::Spawn;
 use kameo_actors::DeliveryStrategy;
 use neo::actors::bacnet::{BACnetIOActor, BACnetNetworkActor};
 use neo::actors::{EventRouter, PubSubBroker};
+use neo::blueprints::{start_background_tasks, BlueprintService, ListBlueprints};
 use neo::messages::NetworkMsg;
 use neo::services::{
     // Actor-based services
@@ -162,7 +163,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 5. Start All Services
+    // 5. Blueprint Service (Visual Scripting)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    info!("");
+    info!("Starting blueprint service...");
+
+    let mut blueprint_service = BlueprintService::new("./data/blueprints");
+
+    // Load all existing blueprints
+    match blueprint_service.load_all() {
+        Ok(count) => {
+            info!("  Loaded {} blueprints", count);
+        }
+        Err(e) => {
+            tracing::warn!("  Failed to load blueprints: {}", e);
+        }
+    }
+
+    // Start file watching for hot reload
+    if let Err(e) = blueprint_service.start_watching() {
+        tracing::warn!("  Hot reload disabled: {}", e);
+    } else {
+        info!("  Hot reload enabled (watching data/blueprints/)");
+    }
+
+    // Spawn as actor
+    let blueprint_actor = BlueprintService::spawn(blueprint_service);
+
+    // Start background task for latent nodes and file watching
+    let blueprint_handle = start_background_tasks(blueprint_actor.clone());
+
+    // TODO: Connect BlueprintService to PubSub so blueprints can react to system events
+    // (e.g., PointValueChanged, DeviceDiscovered, etc.)
+
+    // Show loaded blueprints
+    if let Ok(blueprints) = blueprint_actor.ask(ListBlueprints).await {
+        if !blueprints.is_empty() {
+            for bp in &blueprints {
+                info!("    - {}: {} ({} nodes)", bp.id, bp.name, bp.node_count);
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // 6. Start All Services
     // ─────────────────────────────────────────────────────────────────────────
 
     info!("");
@@ -171,7 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  All services started");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 6. BACnet Network
+    // 7. BACnet Network
     // ─────────────────────────────────────────────────────────────────────────
 
     info!("");
@@ -194,7 +239,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let discovery_handle = BACnetNetworkActor::start_discovery_task(bacnet_network.clone());
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 7. System Ready
+    // 8. System Ready
     // ─────────────────────────────────────────────────────────────────────────
 
     info!("");
@@ -206,6 +251,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("  - Poll device values and store history");
     info!("  - Evaluate alarm conditions on value changes");
     info!("  - Route events to subscribed plugins");
+    info!("  - Execute blueprints (hot reload enabled)");
     info!("");
 
     // Wait for initial discovery
@@ -261,7 +307,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("");
 
     // ─────────────────────────────────────────────────────────────────────────
-    // 8. Wait for Shutdown
+    // 9. Wait for Shutdown
     // ─────────────────────────────────────────────────────────────────────────
 
     tokio::signal::ctrl_c().await?;
@@ -272,11 +318,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Stop background tasks
     polling_handle.abort();
     discovery_handle.abort();
+    blueprint_handle.abort();
 
     // Stop all services
     let _ = registry.ask(RegistryMsg::StopAll).await;
 
     // Drop actors
+    drop(blueprint_actor);
     drop(bacnet_network);
     drop(event_router);
     drop(registry);

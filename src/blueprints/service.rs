@@ -1,23 +1,27 @@
-// Blueprint Service - Actor that manages blueprint execution
+// Blueprint Service - Actor that manages blueprint execution with hot reload
 //
 // The BlueprintService handles:
 // - Loading blueprints from JSON files
-// - Managing blueprint lifecycle
+// - Hot reloading when files change
 // - Dispatching events to blueprints
 // - Managing latent node state
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
+use kameo::actor::ActorRef;
 use kameo::message::{Context, Message};
+use notify::{Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tracing::{debug, info, warn};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use super::executor::{BlueprintExecutor, ExecutionContext};
 use super::registry::NodeRegistry;
-use super::types::{Blueprint, ExecutionResult, ExecutionTrigger, LatentState};
+use super::types::{Blueprint, ExecutionResult, ExecutionTrigger, LatentState, WakeCondition};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Messages
@@ -34,6 +38,10 @@ pub struct LoadBlueprint {
 pub struct UnloadBlueprint {
     pub blueprint_id: String,
 }
+
+/// Reload all blueprints from disk
+#[derive(Debug)]
+pub struct ReloadAll;
 
 /// Trigger an event that may start blueprint execution
 #[derive(Debug, Clone)]
@@ -66,6 +74,24 @@ pub struct RegisterCustomNode {
     pub executor: Arc<dyn super::registry::NodeExecutor>,
 }
 
+/// Internal message for file change notifications
+#[derive(Debug)]
+pub struct FileChanged {
+    pub path: PathBuf,
+    pub kind: FileChangeKind,
+}
+
+#[derive(Debug, Clone)]
+pub enum FileChangeKind {
+    Created,
+    Modified,
+    Removed,
+}
+
+/// Check and resume any pending latent executions
+#[derive(Debug)]
+pub struct TickLatent;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Response Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -78,10 +104,11 @@ pub struct BlueprintInfo {
     pub description: Option<String>,
     pub node_count: usize,
     pub connection_count: usize,
+    pub file_path: Option<String>,
 }
 
-impl From<&Blueprint> for BlueprintInfo {
-    fn from(bp: &Blueprint) -> Self {
+impl BlueprintInfo {
+    fn from_blueprint(bp: &Blueprint, path: Option<&Path>) -> Self {
         Self {
             id: bp.id.clone(),
             name: bp.name.clone(),
@@ -89,6 +116,7 @@ impl From<&Blueprint> for BlueprintInfo {
             description: bp.description.clone(),
             node_count: bp.nodes.len(),
             connection_count: bp.connections.len(),
+            file_path: path.map(|p| p.display().to_string()),
         }
     }
 }
@@ -97,27 +125,31 @@ impl From<&Blueprint> for BlueprintInfo {
 // Blueprint Service Actor
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Actor that manages blueprint execution
+/// Actor that manages blueprint execution with hot reload
 #[derive(kameo::Actor)]
 pub struct BlueprintService {
     /// Node registry with built-in and custom nodes
     registry: Arc<NodeRegistry>,
-    /// Loaded blueprints
+    /// Loaded blueprints (id -> blueprint)
     blueprints: HashMap<String, Arc<Blueprint>>,
+    /// Map from file path to blueprint ID (for hot reload)
+    path_to_id: HashMap<PathBuf, String>,
     /// Blueprint executor
     executor: BlueprintExecutor,
     /// Suspended executions waiting for conditions
     suspended: HashMap<String, SuspendedExecution>,
     /// Directory to watch for blueprint files
     blueprints_dir: PathBuf,
+    /// File watcher (kept alive)
+    #[allow(dead_code)]
+    watcher: Option<RecommendedWatcher>,
+    /// Channel receiver for file events
+    file_event_rx: Option<mpsc::UnboundedReceiver<FileChanged>>,
 }
 
 struct SuspendedExecution {
-    #[allow(dead_code)]
     blueprint_id: String,
-    #[allow(dead_code)]
     context: ExecutionContext,
-    #[allow(dead_code)]
     state: LatentState,
 }
 
@@ -130,14 +162,104 @@ impl BlueprintService {
         Self {
             registry,
             blueprints: HashMap::new(),
+            path_to_id: HashMap::new(),
             executor,
             suspended: HashMap::new(),
             blueprints_dir: blueprints_dir.as_ref().to_path_buf(),
+            watcher: None,
+            file_event_rx: None,
+        }
+    }
+
+    /// Start watching the blueprints directory for changes
+    pub fn start_watching(&mut self) -> Result<(), String> {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.file_event_rx = Some(rx);
+
+        let blueprints_dir = self.blueprints_dir.clone();
+
+        // Create file watcher
+        let mut watcher = notify::recommended_watcher(move |res: Result<NotifyEvent, _>| {
+            if let Ok(event) = res {
+                let kind = match event.kind {
+                    EventKind::Create(_) => Some(FileChangeKind::Created),
+                    EventKind::Modify(_) => Some(FileChangeKind::Modified),
+                    EventKind::Remove(_) => Some(FileChangeKind::Removed),
+                    _ => None,
+                };
+
+                if let Some(kind) = kind {
+                    for path in event.paths {
+                        // Only care about .json files
+                        if path.extension().and_then(|s| s.to_str()) == Some("json") {
+                            let _ = tx.send(FileChanged {
+                                path: path.clone(),
+                                kind: kind.clone(),
+                            });
+                        }
+                    }
+                }
+            }
+        })
+        .map_err(|e| format!("Failed to create file watcher: {}", e))?;
+
+        // Start watching
+        watcher
+            .watch(&blueprints_dir, RecursiveMode::NonRecursive)
+            .map_err(|e| format!("Failed to watch directory: {}", e))?;
+
+        self.watcher = Some(watcher);
+
+        info!(
+            dir = %blueprints_dir.display(),
+            "Started watching blueprints directory"
+        );
+
+        Ok(())
+    }
+
+    /// Process any pending file change events
+    fn process_file_events(&mut self) {
+        // Collect all events first to avoid borrow issues
+        let events: Vec<FileChanged> = if let Some(rx) = &mut self.file_event_rx {
+            let mut events = Vec::new();
+            while let Ok(event) = rx.try_recv() {
+                events.push(event);
+            }
+            events
+        } else {
+            return;
+        };
+
+        // Now process the collected events
+        for event in events {
+            match event.kind {
+                FileChangeKind::Created | FileChangeKind::Modified => {
+                    info!(path = %event.path.display(), "Blueprint file changed, reloading...");
+                    if let Err(e) = self.load_blueprint_file(&event.path) {
+                        warn!(
+                            path = %event.path.display(),
+                            error = %e,
+                            "Failed to reload blueprint"
+                        );
+                    }
+                }
+                FileChangeKind::Removed => {
+                    if let Some(id) = self.path_to_id.remove(&event.path) {
+                        info!(
+                            blueprint_id = %id,
+                            path = %event.path.display(),
+                            "Blueprint file removed, unloading..."
+                        );
+                        self.blueprints.remove(&id);
+                    }
+                }
+            }
         }
     }
 
     /// Load all blueprints from the blueprints directory
-    pub async fn load_all(&mut self) -> Result<usize, std::io::Error> {
+    pub fn load_all(&mut self) -> Result<usize, std::io::Error> {
         let dir = &self.blueprints_dir;
         if !dir.exists() {
             info!(path = %dir.display(), "Blueprints directory does not exist, creating");
@@ -178,6 +300,16 @@ impl BlueprintService {
         self.validate_blueprint(&blueprint)?;
 
         let id = blueprint.id.clone();
+
+        // Remove old mapping if this file was previously loaded with a different ID
+        if let Some(old_id) = self.path_to_id.get(path) {
+            if old_id != &id {
+                self.blueprints.remove(old_id);
+            }
+        }
+
+        // Update mappings
+        self.path_to_id.insert(path.to_path_buf(), id.clone());
         self.blueprints.insert(id.clone(), Arc::new(blueprint));
 
         Ok(id)
@@ -231,7 +363,6 @@ impl BlueprintService {
         for blueprint in self.blueprints.values() {
             for node in blueprint.event_nodes() {
                 // Check if this event node handles this event type
-                // Event nodes have config.event_type or match by node type
                 let matches = if let Some(config_event) = node.config.get("event_type") {
                     config_event.as_str() == Some(event_type)
                 } else {
@@ -250,19 +381,75 @@ impl BlueprintService {
         handlers
     }
 
+    /// Process pending latent executions
+    async fn tick_latent(&mut self) {
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        // Find executions ready to resume
+        let ready: Vec<String> = self
+            .suspended
+            .iter()
+            .filter(|(_, exec)| match &exec.state.wake_condition {
+                WakeCondition::Delay { until_ms } => now_ms >= *until_ms,
+                // Events and point changes are handled via TriggerEvent
+                _ => false,
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Resume ready executions
+        for id in ready {
+            if let Some(mut exec) = self.suspended.remove(&id) {
+                debug!(
+                    blueprint_id = %exec.blueprint_id,
+                    node_id = %exec.state.node_id,
+                    "Resuming latent execution"
+                );
+
+                let result = self.executor.resume(&mut exec.context, &exec.state).await;
+
+                // Handle result
+                match result {
+                    ExecutionResult::Completed { .. } => {
+                        debug!(blueprint_id = %exec.blueprint_id, "Latent execution completed");
+                    }
+                    ExecutionResult::Suspended { state } => {
+                        // Re-suspend with new state
+                        let new_id = format!("{}-{}", exec.blueprint_id, state.node_id);
+                        self.suspended.insert(
+                            new_id,
+                            SuspendedExecution {
+                                blueprint_id: exec.blueprint_id,
+                                context: exec.context,
+                                state,
+                            },
+                        );
+                    }
+                    ExecutionResult::Failed { error } => {
+                        error!(
+                            blueprint_id = %exec.blueprint_id,
+                            error = %error,
+                            "Latent execution failed"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     /// Register a custom node type
     fn register_custom_node(
         &mut self,
         definition: super::types::NodeDef,
-        executor: Arc<dyn super::registry::NodeExecutor>,
+        executor_fn: Arc<dyn super::registry::NodeExecutor>,
     ) {
-        // We need to get mutable access to the registry
-        // Create a new registry with the custom node added
         let mut new_registry = NodeRegistry::with_builtins();
         let node_id = definition.id.clone();
-        new_registry.register(definition, executor);
+        new_registry.register(definition, executor_fn);
 
-        // Copy existing custom nodes (this is a simplified approach)
         self.registry = Arc::new(new_registry);
         self.executor = BlueprintExecutor::new(Arc::clone(&self.registry));
 
@@ -295,11 +482,30 @@ impl Message<UnloadBlueprint> for BlueprintService {
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
         if self.blueprints.remove(&msg.blueprint_id).is_some() {
+            // Also remove from path mapping
+            self.path_to_id.retain(|_, id| id != &msg.blueprint_id);
             info!(blueprint_id = %msg.blueprint_id, "Unloaded blueprint");
             true
         } else {
             false
         }
+    }
+}
+
+impl Message<ReloadAll> for BlueprintService {
+    type Reply = Result<usize, String>;
+
+    async fn handle(
+        &mut self,
+        _msg: ReloadAll,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        // Clear existing blueprints
+        self.blueprints.clear();
+        self.path_to_id.clear();
+
+        // Reload all
+        self.load_all().map_err(|e| e.to_string())
     }
 }
 
@@ -311,6 +517,9 @@ impl Message<TriggerEvent> for BlueprintService {
         msg: TriggerEvent,
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        // Process any pending file changes first
+        self.process_file_events();
+
         debug!(
             event_type = %msg.event_type,
             "Triggering event for blueprints"
@@ -327,18 +536,12 @@ impl Message<TriggerEvent> for BlueprintService {
 
             let result = self
                 .executor
-                .execute(Arc::clone(&blueprint), &event_node_id, trigger)
+                .execute(Arc::clone(&blueprint), &event_node_id, trigger.clone())
                 .await;
 
             // Handle suspended executions
             if let ExecutionResult::Suspended { state } = &result {
-                let ctx = ExecutionContext::new(
-                    Arc::clone(&blueprint),
-                    ExecutionTrigger::Event {
-                        event_type: msg.event_type.clone(),
-                        data: msg.data.clone(),
-                    },
-                );
+                let ctx = ExecutionContext::new(Arc::clone(&blueprint), trigger);
                 let suspension_id = format!("{}-{}", blueprint.id, state.node_id);
                 self.suspended.insert(
                     suspension_id,
@@ -353,6 +556,39 @@ impl Message<TriggerEvent> for BlueprintService {
             results.push(result);
         }
 
+        // Also check if any suspended executions are waiting for this event
+        let waiting_for_event: Vec<String> = self
+            .suspended
+            .iter()
+            .filter(|(_, exec)| matches!(
+                &exec.state.wake_condition,
+                WakeCondition::Event { event_type, .. } if event_type == &msg.event_type
+            ))
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        for id in waiting_for_event {
+            if let Some(mut exec) = self.suspended.remove(&id) {
+                // Set the event data as output
+                exec.context
+                    .set_node_output(&exec.state.node_id, "event_data", msg.data.clone());
+
+                let result = self.executor.resume(&mut exec.context, &exec.state).await;
+
+                if let ExecutionResult::Suspended { state } = result {
+                    let new_id = format!("{}-{}", exec.blueprint_id, state.node_id);
+                    self.suspended.insert(
+                        new_id,
+                        SuspendedExecution {
+                            blueprint_id: exec.blueprint_id,
+                            context: exec.context,
+                            state,
+                        },
+                    );
+                }
+            }
+        }
+
         results
     }
 }
@@ -365,6 +601,9 @@ impl Message<ExecuteBlueprint> for BlueprintService {
         msg: ExecuteBlueprint,
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
+        // Process any pending file changes first
+        self.process_file_events();
+
         let blueprint = self
             .blueprints
             .get(&msg.blueprint_id)
@@ -392,8 +631,15 @@ impl Message<ListBlueprints> for BlueprintService {
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
         self.blueprints
-            .values()
-            .map(|bp| BlueprintInfo::from(bp.as_ref()))
+            .iter()
+            .map(|(id, bp)| {
+                let path = self
+                    .path_to_id
+                    .iter()
+                    .find(|(_, bp_id)| *bp_id == id)
+                    .map(|(p, _)| p.as_path());
+                BlueprintInfo::from_blueprint(bp, path)
+            })
             .collect()
     }
 }
@@ -420,6 +666,70 @@ impl Message<RegisterCustomNode> for BlueprintService {
     ) -> Self::Reply {
         self.register_custom_node(msg.definition, msg.executor);
     }
+}
+
+impl Message<FileChanged> for BlueprintService {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: FileChanged,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        match msg.kind {
+            FileChangeKind::Created | FileChangeKind::Modified => {
+                info!(path = %msg.path.display(), "Blueprint file changed, reloading...");
+                if let Err(e) = self.load_blueprint_file(&msg.path) {
+                    warn!(
+                        path = %msg.path.display(),
+                        error = %e,
+                        "Failed to reload blueprint"
+                    );
+                }
+            }
+            FileChangeKind::Removed => {
+                if let Some(id) = self.path_to_id.remove(&msg.path) {
+                    info!(
+                        blueprint_id = %id,
+                        path = %msg.path.display(),
+                        "Blueprint file removed, unloading..."
+                    );
+                    self.blueprints.remove(&id);
+                }
+            }
+        }
+    }
+}
+
+impl Message<TickLatent> for BlueprintService {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        _msg: TickLatent,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.tick_latent().await;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper to start the blueprint service with watching
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Start the blueprint service background tasks (file watching, latent ticking)
+pub fn start_background_tasks(
+    actor_ref: ActorRef<BlueprintService>,
+) -> tokio::task::JoinHandle<()> {
+    let actor = actor_ref.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        loop {
+            interval.tick().await;
+            // Tick latent executions
+            let _ = actor.tell(TickLatent).await;
+        }
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -465,6 +775,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "test-blueprint");
         assert!(service.blueprints.contains_key("test-blueprint"));
+        assert!(service.path_to_id.contains_key(&blueprint_path));
     }
 
     #[tokio::test]

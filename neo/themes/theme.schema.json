@@ -1,0 +1,96 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Neo Theme",
+  "description": "Theme definition for Neo application",
+  "type": "object",
+  "required": ["name", "type", "colors"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "JSON Schema reference"
+    },
+    "name": {
+      "type": "string",
+      "description": "Display name of the theme"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["dark", "light"],
+      "description": "Theme type (affects system color-scheme)"
+    },
+    "colors": {
+      "type": "object",
+      "description": "Color definitions for UI elements",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+      },
+      "properties": {
+        "background": { "type": "string", "description": "Main application background" },
+        "foreground": { "type": "string", "description": "Default text color" },
+        "primary": { "type": "string", "description": "Primary accent color" },
+        "primaryForeground": { "type": "string", "description": "Text on primary color" },
+
+        "titleBar.background": { "type": "string" },
+        "titleBar.foreground": { "type": "string" },
+        "titleBar.inactiveBackground": { "type": "string" },
+        "titleBar.inactiveForeground": { "type": "string" },
+
+        "sideBar.background": { "type": "string" },
+        "sideBar.foreground": { "type": "string" },
+        "sideBar.border": { "type": "string" },
+
+        "activityBar.background": { "type": "string" },
+        "activityBar.foreground": { "type": "string" },
+        "activityBar.inactiveForeground": { "type": "string" },
+
+        "panel.background": { "type": "string" },
+        "panel.border": { "type": "string" },
+
+        "statusBar.background": { "type": "string" },
+        "statusBar.foreground": { "type": "string" },
+        "statusBar.noFolderBackground": { "type": "string" },
+
+        "input.background": { "type": "string" },
+        "input.foreground": { "type": "string" },
+        "input.border": { "type": "string" },
+        "input.placeholderForeground": { "type": "string" },
+
+        "button.background": { "type": "string" },
+        "button.foreground": { "type": "string" },
+        "button.hoverBackground": { "type": "string" },
+        "button.secondaryBackground": { "type": "string" },
+        "button.secondaryForeground": { "type": "string" },
+        "button.secondaryHoverBackground": { "type": "string" },
+
+        "list.activeSelectionBackground": { "type": "string" },
+        "list.activeSelectionForeground": { "type": "string" },
+        "list.hoverBackground": { "type": "string" },
+        "list.focusBackground": { "type": "string" },
+
+        "scrollbar.thumb": { "type": "string" },
+        "scrollbar.thumbHover": { "type": "string" },
+        "scrollbar.track": { "type": "string" },
+
+        "border": { "type": "string" },
+        "focusBorder": { "type": "string" },
+        "separator": { "type": "string" },
+
+        "dropdown.background": { "type": "string" },
+        "dropdown.foreground": { "type": "string" },
+        "dropdown.border": { "type": "string" },
+
+        "checkbox.background": { "type": "string" },
+        "checkbox.border": { "type": "string" },
+
+        "text.link": { "type": "string" },
+        "text.codeBackground": { "type": "string" },
+
+        "error": { "type": "string" },
+        "warning": { "type": "string" },
+        "info": { "type": "string" },
+        "success": { "type": "string" }
+      }
+    }
+  }
+}
