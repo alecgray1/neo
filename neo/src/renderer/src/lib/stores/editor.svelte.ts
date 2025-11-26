@@ -1,9 +1,12 @@
 export interface EditorTab {
   id: string
   title: string
+  uri: string // Reference to document in documentStore
   icon?: string
   dirty?: boolean
-  content: unknown
+  isPreview: boolean // Preview mode (italicized, replaceable)
+  isPinned: boolean // Pinned (won't auto-close, stays left)
+  lastAccessed: number // For MRU tracking
 }
 
 export interface EditorGroup {
@@ -18,7 +21,7 @@ export type EditorLayoutNode =
 
 export interface EditorLayout {
   root: EditorLayoutNode
-  groups: Map<string, EditorGroup>
+  groups: Record<string, EditorGroup>
 }
 
 let nextGroupId = 1
@@ -35,55 +38,176 @@ function generateTabId(): string {
 function createEditorStore() {
   // Initialize with a single empty group
   const initialGroupId = generateGroupId()
-  const initialGroups = new Map<string, EditorGroup>()
-  initialGroups.set(initialGroupId, {
-    id: initialGroupId,
-    tabs: [],
-    activeTabId: null
-  })
 
-  let layout = $state<EditorLayout>({
-    root: { type: 'group', groupId: initialGroupId },
-    groups: initialGroups
+  // Expose state directly for proper reactivity - using plain objects for deep tracking
+  const state = $state({
+    layout: {
+      root: { type: 'group', groupId: initialGroupId } as EditorLayoutNode,
+      groups: {
+        [initialGroupId]: {
+          id: initialGroupId,
+          tabs: [],
+          activeTabId: null
+        }
+      } as Record<string, EditorGroup>
+    },
+    activeGroupId: initialGroupId
   })
-
-  let activeGroupId = $state<string>(initialGroupId)
 
   return {
-    get layout() {
-      return layout
-    },
-
-    get activeGroupId() {
-      return activeGroupId
-    },
+    // Direct state access for reactivity
+    state,
 
     get activeGroup(): EditorGroup | undefined {
-      return layout.groups.get(activeGroupId)
+      return state.layout.groups[state.activeGroupId]
     },
 
     setActiveGroup(groupId: string) {
-      if (layout.groups.has(groupId)) {
-        activeGroupId = groupId
+      if (state.layout.groups[groupId]) {
+        state.activeGroupId = groupId
       }
     },
 
     // Open a new tab in the active group
-    openTab(tab: Omit<EditorTab, 'id'>, groupId?: string): string {
-      const targetGroupId = groupId ?? activeGroupId
-      const group = layout.groups.get(targetGroupId)
+    openTab(
+      tab: Omit<EditorTab, 'id' | 'isPreview' | 'isPinned' | 'lastAccessed'> & {
+        isPreview?: boolean
+        isPinned?: boolean
+      },
+      groupId?: string
+    ): string {
+      const targetGroupId = groupId ?? state.activeGroupId
+      const group = state.layout.groups[targetGroupId]
       if (!group) return ''
+
+      // Check if this URI is already open in this group
+      const existingTab = group.tabs.find((t) => t.uri === tab.uri)
+      if (existingTab) {
+        // If found, just activate it
+        group.activeTabId = existingTab.id
+        existingTab.lastAccessed = Date.now()
+        state.activeGroupId = targetGroupId
+        // If opening non-preview and existing is preview, promote it
+        if (!tab.isPreview && existingTab.isPreview) {
+          existingTab.isPreview = false
+        }
+        return existingTab.id
+      }
+
+      const isPreview = tab.isPreview ?? false
+
+      // If opening a preview tab, replace existing preview tab if any
+      if (isPreview) {
+        const existingPreviewIndex = group.tabs.findIndex((t) => t.isPreview && !t.isPinned)
+        if (existingPreviewIndex !== -1) {
+          const newTab: EditorTab = {
+            ...tab,
+            id: generateTabId(),
+            isPreview: true,
+            isPinned: false,
+            lastAccessed: Date.now()
+          }
+          group.tabs[existingPreviewIndex] = newTab
+          group.activeTabId = newTab.id
+          state.activeGroupId = targetGroupId
+          return newTab.id
+        }
+      }
 
       const newTab: EditorTab = {
         ...tab,
-        id: generateTabId()
+        id: generateTabId(),
+        isPreview,
+        isPinned: tab.isPinned ?? false,
+        lastAccessed: Date.now()
       }
 
-      group.tabs = [...group.tabs, newTab]
+      // Insert after pinned tabs
+      const lastPinnedIndex = group.tabs.reduce(
+        (acc, t, i) => (t.isPinned ? i + 1 : acc),
+        0
+      )
+      group.tabs.splice(lastPinnedIndex, 0, newTab)
       group.activeTabId = newTab.id
-      activeGroupId = targetGroupId
+      state.activeGroupId = targetGroupId
 
       return newTab.id
+    },
+
+    // Find tab by URI
+    findTabByUri(uri: string, groupId?: string): { groupId: string; tab: EditorTab } | null {
+      if (groupId) {
+        const group = state.layout.groups[groupId]
+        if (group) {
+          const tab = group.tabs.find((t) => t.uri === uri)
+          if (tab) return { groupId, tab }
+        }
+        return null
+      }
+      // Search all groups
+      for (const gid of Object.keys(state.layout.groups)) {
+        const group = state.layout.groups[gid]
+        const tab = group.tabs.find((t) => t.uri === uri)
+        if (tab) return { groupId: gid, tab }
+      }
+      return null
+    },
+
+    // Pin a tab
+    pinTab(tabId: string, groupId?: string) {
+      const targetGroupId = groupId ?? this.findGroupContainingTab(tabId)
+      if (!targetGroupId) return
+
+      const group = state.layout.groups[targetGroupId]
+      if (!group) return
+
+      const tabIndex = group.tabs.findIndex((t) => t.id === tabId)
+      if (tabIndex === -1) return
+
+      const tab = group.tabs[tabIndex]
+      if (tab.isPinned) return // Already pinned
+
+      tab.isPinned = true
+      tab.isPreview = false // Pinning promotes from preview
+
+      // Move to end of pinned section
+      const lastPinnedIndex = group.tabs.reduce(
+        (acc, t, i) => (t.isPinned && i !== tabIndex ? i + 1 : acc),
+        0
+      )
+      if (tabIndex !== lastPinnedIndex) {
+        // Remove from current position and insert at pinned section
+        group.tabs.splice(tabIndex, 1)
+        group.tabs.splice(lastPinnedIndex, 0, tab)
+      }
+    },
+
+    // Unpin a tab
+    unpinTab(tabId: string, groupId?: string) {
+      const targetGroupId = groupId ?? this.findGroupContainingTab(tabId)
+      if (!targetGroupId) return
+
+      const group = state.layout.groups[targetGroupId]
+      if (!group) return
+
+      const tab = group.tabs.find((t) => t.id === tabId)
+      if (tab) {
+        tab.isPinned = false
+      }
+    },
+
+    // Promote preview tab to regular tab
+    promoteFromPreview(tabId: string, groupId?: string) {
+      const targetGroupId = groupId ?? this.findGroupContainingTab(tabId)
+      if (!targetGroupId) return
+
+      const group = state.layout.groups[targetGroupId]
+      if (!group) return
+
+      const tab = group.tabs.find((t) => t.id === tabId)
+      if (tab) {
+        tab.isPreview = false
+      }
     },
 
     // Close a tab
@@ -91,13 +215,13 @@ function createEditorStore() {
       const targetGroupId = groupId ?? this.findGroupContainingTab(tabId)
       if (!targetGroupId) return
 
-      const group = layout.groups.get(targetGroupId)
+      const group = state.layout.groups[targetGroupId]
       if (!group) return
 
       const tabIndex = group.tabs.findIndex((t) => t.id === tabId)
       if (tabIndex === -1) return
 
-      group.tabs = group.tabs.filter((t) => t.id !== tabId)
+      group.tabs.splice(tabIndex, 1)
 
       // Update active tab if needed
       if (group.activeTabId === tabId) {
@@ -111,7 +235,7 @@ function createEditorStore() {
       }
 
       // If group is now empty and it's not the last group, remove it
-      if (group.tabs.length === 0 && layout.groups.size > 1) {
+      if (group.tabs.length === 0 && Object.keys(state.layout.groups).length > 1) {
         this.removeGroup(targetGroupId)
       }
     },
@@ -121,20 +245,21 @@ function createEditorStore() {
       const targetGroupId = groupId ?? this.findGroupContainingTab(tabId)
       if (!targetGroupId) return
 
-      const group = layout.groups.get(targetGroupId)
+      const group = state.layout.groups[targetGroupId]
       if (!group) return
 
       if (group.tabs.some((t) => t.id === tabId)) {
         group.activeTabId = tabId
-        activeGroupId = targetGroupId
+        state.activeGroupId = targetGroupId
       }
     },
 
     // Find which group contains a tab
     findGroupContainingTab(tabId: string): string | null {
-      for (const [groupId, group] of layout.groups) {
+      for (const gid of Object.keys(state.layout.groups)) {
+        const group = state.layout.groups[gid]
         if (group.tabs.some((t) => t.id === tabId)) {
-          return groupId
+          return gid
         }
       }
       return null
@@ -145,43 +270,45 @@ function createEditorStore() {
       const sourceGroupId = this.findGroupContainingTab(tabId)
       if (!sourceGroupId) return
 
-      const sourceGroup = layout.groups.get(sourceGroupId)
-      const targetGroup = layout.groups.get(targetGroupId)
+      const sourceGroup = state.layout.groups[sourceGroupId]
+      const targetGroup = state.layout.groups[targetGroupId]
       if (!sourceGroup || !targetGroup) return
 
-      const tab = sourceGroup.tabs.find((t) => t.id === tabId)
-      if (!tab) return
+      const tabIndex = sourceGroup.tabs.findIndex((t) => t.id === tabId)
+      if (tabIndex === -1) return
+
+      const tab = sourceGroup.tabs[tabIndex]
 
       // Remove from source
-      sourceGroup.tabs = sourceGroup.tabs.filter((t) => t.id !== tabId)
+      sourceGroup.tabs.splice(tabIndex, 1)
 
       // Add to target
       if (index !== undefined && index >= 0) {
-        targetGroup.tabs = [...targetGroup.tabs.slice(0, index), tab, ...targetGroup.tabs.slice(index)]
+        targetGroup.tabs.splice(index, 0, tab)
       } else {
-        targetGroup.tabs = [...targetGroup.tabs, tab]
+        targetGroup.tabs.push(tab)
       }
 
       targetGroup.activeTabId = tabId
-      activeGroupId = targetGroupId
+      state.activeGroupId = targetGroupId
 
       // Clean up empty source group
-      if (sourceGroup.tabs.length === 0 && layout.groups.size > 1) {
+      if (sourceGroup.tabs.length === 0 && Object.keys(state.layout.groups).length > 1) {
         this.removeGroup(sourceGroupId)
       }
     },
 
     // Split current group
     splitGroup(direction: 'horizontal' | 'vertical', groupId?: string): string {
-      const targetGroupId = groupId ?? activeGroupId
+      const targetGroupId = groupId ?? state.activeGroupId
       const newGroupId = generateGroupId()
 
       // Create new empty group
-      layout.groups.set(newGroupId, {
+      state.layout.groups[newGroupId] = {
         id: newGroupId,
         tabs: [],
         activeTabId: null
-      })
+      }
 
       // Update layout tree
       const updateNode = (node: EditorLayoutNode): EditorLayoutNode => {
@@ -202,17 +329,18 @@ function createEditorStore() {
         return node
       }
 
-      layout.root = updateNode(layout.root)
-      activeGroupId = newGroupId
+      state.layout.root = updateNode(state.layout.root)
+      state.activeGroupId = newGroupId
 
       return newGroupId
     },
 
     // Remove a group from the layout
     removeGroup(groupId: string) {
-      if (!layout.groups.has(groupId) || layout.groups.size <= 1) return
+      const groupIds = Object.keys(state.layout.groups)
+      if (!state.layout.groups[groupId] || groupIds.length <= 1) return
 
-      layout.groups.delete(groupId)
+      delete state.layout.groups[groupId]
 
       // Update layout tree to remove the group
       const removeFromNode = (node: EditorLayoutNode): EditorLayoutNode | null => {
@@ -244,14 +372,14 @@ function createEditorStore() {
         }
       }
 
-      const newRoot = removeFromNode(layout.root)
+      const newRoot = removeFromNode(state.layout.root)
       if (newRoot) {
-        layout.root = newRoot
+        state.layout.root = newRoot
       }
 
       // Update active group if it was removed
-      if (activeGroupId === groupId) {
-        activeGroupId = layout.groups.keys().next().value ?? ''
+      if (state.activeGroupId === groupId) {
+        state.activeGroupId = Object.keys(state.layout.groups)[0] ?? ''
       }
     },
 
@@ -271,7 +399,7 @@ function createEditorStore() {
         return node
       }
 
-      layout.root = updateNode(layout.root, path)
+      state.layout.root = updateNode(state.layout.root, path)
     },
 
     // Mark a tab as dirty (unsaved)
@@ -279,7 +407,7 @@ function createEditorStore() {
       const groupId = this.findGroupContainingTab(tabId)
       if (!groupId) return
 
-      const group = layout.groups.get(groupId)
+      const group = state.layout.groups[groupId]
       if (!group) return
 
       const tab = group.tabs.find((t) => t.id === tabId)

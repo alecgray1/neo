@@ -1,36 +1,103 @@
 <script lang="ts">
   import { layoutStore } from '$lib/stores/layout.svelte'
-    import { ScrollArea } from "$lib/components/ui/scroll-area/index.js";
-  import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from '@lucide/svelte'
+  import { editorStore } from '$lib/stores/editor.svelte'
+  import { documentStore } from '$lib/stores/documents.svelte'
+  import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
+  import { ChevronRight, ChevronDown, FileJson, Folder, FolderOpen } from '@lucide/svelte'
+  import { mockFiles, type MockFile } from '../../mock-data'
 
-  // Demo file tree structure
-  const fileTree = [
-    {
-      name: 'src',
-      type: 'folder' as const,
-      expanded: true,
-      children: [
-        {
-          name: 'components',
-          type: 'folder' as const,
-          expanded: true,
-          children: [
-            { name: 'App.svelte', type: 'file' as const },
-            { name: 'Button.svelte', type: 'file' as const }
-          ]
-        },
-        {
-          name: 'lib',
-          type: 'folder' as const,
-          expanded: false,
-          children: [{ name: 'utils.ts', type: 'file' as const }]
-        },
-        { name: 'main.ts', type: 'file' as const }
-      ]
-    },
-    { name: 'package.json', type: 'file' as const },
-    { name: 'README.md', type: 'file' as const }
-  ]
+  // Build file tree from mock files
+  interface TreeNode {
+    name: string
+    type: 'folder' | 'file'
+    uri?: string
+    expanded?: boolean
+    children?: TreeNode[]
+  }
+
+  function buildFileTree(files: MockFile[]): TreeNode[] {
+    const root: TreeNode[] = []
+    const folders = new Map<string, TreeNode>()
+
+    // Create folder structure
+    for (const file of files) {
+      const parts = file.path.split('/')
+      const fileName = parts.pop()!
+      let currentPath = ''
+      let currentLevel = root
+
+      for (const part of parts) {
+        currentPath = currentPath ? `${currentPath}/${part}` : part
+
+        if (!folders.has(currentPath)) {
+          const folder: TreeNode = {
+            name: part,
+            type: 'folder',
+            expanded: true,
+            children: []
+          }
+          folders.set(currentPath, folder)
+          currentLevel.push(folder)
+        }
+
+        currentLevel = folders.get(currentPath)!.children!
+      }
+
+      // Add file
+      currentLevel.push({
+        name: fileName,
+        type: 'file',
+        uri: file.uri
+      })
+    }
+
+    return root
+  }
+
+  let fileTree = $state(buildFileTree(mockFiles))
+
+  function toggleFolder(node: TreeNode) {
+    if (node.type === 'folder') {
+      node.expanded = !node.expanded
+    }
+  }
+
+  async function openFile(uri: string, isPreview: boolean = true) {
+    const doc = await documentStore.open(uri)
+    if (doc) {
+      editorStore.openTab({
+        title: doc.name,
+        uri: doc.uri,
+        isPreview
+      })
+    }
+  }
+
+  function handleFileClick(node: TreeNode, e: MouseEvent) {
+    if (node.type === 'file' && node.uri) {
+      // Double-click opens as non-preview, single-click as preview
+      openFile(node.uri, true)
+    } else if (node.type === 'folder') {
+      toggleFolder(node)
+    }
+  }
+
+  function handleFileDblClick(node: TreeNode) {
+    if (node.type === 'file' && node.uri) {
+      // Double-click promotes from preview
+      openFile(node.uri, false)
+    }
+  }
+
+  function handleDragStart(e: DragEvent, node: TreeNode) {
+    if (node.type === 'file' && node.uri && e.dataTransfer) {
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        uri: node.uri,
+        title: node.name
+      }))
+      e.dataTransfer.effectAllowed = 'copyMove'
+    }
+  }
 
   function getSidebarTitle(): string {
     switch (layoutStore.state.activeActivityItem) {
@@ -92,14 +159,18 @@
     </ScrollArea>
 </div>
 
-{#snippet treeItem(item: (typeof fileTree)[0], depth: number)}
+{#snippet treeItem(item: TreeNode, depth: number)}
   <div class="tree-item">
     <button
       class="tree-row w-full flex items-center gap-1 py-0.5 text-sm hover:bg-[var(--neo-list-hoverBackground)] rounded-sm"
       style="padding-left: {depth * 12 + 4}px;"
+      onclick={(e) => handleFileClick(item, e)}
+      ondblclick={() => handleFileDblClick(item)}
+      draggable={item.type === 'file'}
+      ondragstart={(e) => handleDragStart(e, item)}
     >
       {#if item.type === 'folder'}
-        {#if 'expanded' in item && item.expanded}
+        {#if item.expanded}
           <ChevronDown class="w-4 h-4 shrink-0" />
           <FolderOpen class="w-4 h-4 shrink-0 text-yellow-500" />
         {:else}
@@ -108,12 +179,12 @@
         {/if}
       {:else}
         <span class="w-4"></span>
-        <File class="w-4 h-4 shrink-0 opacity-70" />
+        <FileJson class="w-4 h-4 shrink-0 text-yellow-400" />
       {/if}
       <span class="truncate">{item.name}</span>
     </button>
 
-    {#if item.type === 'folder' && 'expanded' in item && item.expanded && 'children' in item}
+    {#if item.type === 'folder' && item.expanded && item.children}
       {#each item.children as child}
         {@render treeItem(child, depth + 1)}
       {/each}

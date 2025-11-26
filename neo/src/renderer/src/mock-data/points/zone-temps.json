@@ -1,0 +1,125 @@
+{
+  "name": "Zone Temperatures",
+  "description": "Real-time zone temperature readings across all floors",
+  "lastUpdated": "2024-01-15T14:35:00Z",
+  "readings": [
+    {
+      "zone": "101",
+      "name": "Conference Room A",
+      "floor": 1,
+      "temperature": 72.5,
+      "setpoint": 72.0,
+      "humidity": 45,
+      "occupancy": true,
+      "mode": "cooling",
+      "deviceId": 101
+    },
+    {
+      "zone": "102",
+      "name": "Conference Room B",
+      "floor": 1,
+      "temperature": 71.8,
+      "setpoint": 72.0,
+      "humidity": 48,
+      "occupancy": true,
+      "mode": "satisfied",
+      "deviceId": 102
+    },
+    {
+      "zone": "103",
+      "name": "Open Office - East",
+      "floor": 1,
+      "temperature": 73.2,
+      "setpoint": 72.0,
+      "humidity": 42,
+      "occupancy": true,
+      "mode": "cooling",
+      "deviceId": 103
+    },
+    {
+      "zone": "104",
+      "name": "Open Office - West",
+      "floor": 1,
+      "temperature": 71.5,
+      "setpoint": 72.0,
+      "humidity": 44,
+      "occupancy": true,
+      "mode": "heating",
+      "deviceId": 104
+    },
+    {
+      "zone": "201",
+      "name": "Executive Suite",
+      "floor": 2,
+      "temperature": 70.8,
+      "setpoint": 70.0,
+      "humidity": 50,
+      "occupancy": true,
+      "mode": "satisfied",
+      "deviceId": 201
+    },
+    {
+      "zone": "202",
+      "name": "Training Room",
+      "floor": 2,
+      "temperature": 74.5,
+      "setpoint": 72.0,
+      "humidity": 55,
+      "occupancy": true,
+      "mode": "cooling",
+      "deviceId": 202
+    },
+    {
+      "zone": "203",
+      "name": "Server Room",
+      "floor": 2,
+      "temperature": 68.0,
+      "setpoint": 68.0,
+      "humidity": 40,
+      "occupancy": false,
+      "mode": "satisfied",
+      "deviceId": 203
+    },
+    {
+      "zone": "204",
+      "name": "Break Room",
+      "floor": 2,
+      "temperature": 73.0,
+      "setpoint": 72.0,
+      "humidity": 52,
+      "occupancy": true,
+      "mode": "cooling",
+      "deviceId": 204
+    },
+    {
+      "zone": "301",
+      "name": "Lobby",
+      "floor": 0,
+      "temperature": 72.0,
+      "setpoint": 72.0,
+      "humidity": 48,
+      "occupancy": true,
+      "mode": "satisfied",
+      "deviceId": 301
+    },
+    {
+      "zone": "302",
+      "name": "Restrooms",
+      "floor": 0,
+      "temperature": 70.5,
+      "setpoint": 70.0,
+      "humidity": 60,
+      "occupancy": false,
+      "mode": "satisfied",
+      "deviceId": 302
+    }
+  ],
+  "summary": {
+    "averageTemperature": 71.8,
+    "averageHumidity": 48.4,
+    "zonesInCooling": 4,
+    "zonesInHeating": 1,
+    "zonesSatisfied": 5,
+    "totalZones": 10
+  }
+}

@@ -1,0 +1,111 @@
+{
+  "name": "Active Alarms",
+  "description": "Current building automation system alarms",
+  "lastUpdated": "2024-01-15T14:35:00Z",
+  "activeAlarms": [
+    {
+      "id": "ALM-2024-0115-001",
+      "timestamp": "2024-01-15T09:23:00Z",
+      "priority": "medium",
+      "category": "comfort",
+      "source": {
+        "deviceId": 202,
+        "deviceName": "VAV-202",
+        "point": "Zone Temperature"
+      },
+      "condition": "High Zone Temperature",
+      "message": "Zone temperature 76.5°F exceeds setpoint 72°F by 4.5°F",
+      "value": 76.5,
+      "limit": 77,
+      "acknowledged": false,
+      "acknowledgedBy": null,
+      "acknowledgedAt": null,
+      "notes": null
+    },
+    {
+      "id": "ALM-2024-0115-002",
+      "timestamp": "2024-01-15T11:45:00Z",
+      "priority": "low",
+      "category": "maintenance",
+      "source": {
+        "deviceId": 1001,
+        "deviceName": "AHU-001",
+        "point": "Filter Differential Pressure"
+      },
+      "condition": "Filter Change Required",
+      "message": "Filter pressure drop 1.2 inWC approaching limit 1.5 inWC",
+      "value": 1.2,
+      "limit": 1.5,
+      "acknowledged": true,
+      "acknowledgedBy": "jsmith",
+      "acknowledgedAt": "2024-01-15T12:00:00Z",
+      "notes": "Scheduled for next maintenance window"
+    },
+    {
+      "id": "ALM-2024-0115-003",
+      "timestamp": "2024-01-15T14:20:00Z",
+      "priority": "high",
+      "category": "equipment",
+      "source": {
+        "deviceId": 105,
+        "deviceName": "VAV-105",
+        "point": "Damper Position"
+      },
+      "condition": "Damper Actuator Fault",
+      "message": "Damper not responding to commands - stuck at 100%",
+      "value": 100,
+      "limit": null,
+      "acknowledged": false,
+      "acknowledgedBy": null,
+      "acknowledgedAt": null,
+      "notes": null
+    }
+  ],
+  "alarmHistory": [
+    {
+      "id": "ALM-2024-0114-015",
+      "timestamp": "2024-01-14T22:15:00Z",
+      "clearedAt": "2024-01-14T22:45:00Z",
+      "priority": "medium",
+      "category": "comfort",
+      "source": {
+        "deviceId": 104,
+        "deviceName": "VAV-104",
+        "point": "Zone Temperature"
+      },
+      "condition": "Low Zone Temperature",
+      "message": "Zone temperature dropped below heating setpoint"
+    },
+    {
+      "id": "ALM-2024-0114-012",
+      "timestamp": "2024-01-14T16:30:00Z",
+      "clearedAt": "2024-01-14T17:00:00Z",
+      "priority": "low",
+      "category": "communication",
+      "source": {
+        "deviceId": 203,
+        "deviceName": "VAV-203",
+        "point": "Communication"
+      },
+      "condition": "Device Offline",
+      "message": "Lost communication with device - restored after 30 minutes"
+    }
+  ],
+  "summary": {
+    "critical": 0,
+    "high": 1,
+    "medium": 1,
+    "low": 1,
+    "total": 3,
+    "unacknowledged": 2
+  },
+  "alarmSettings": {
+    "emailNotifications": true,
+    "smsNotifications": false,
+    "criticalPhoneCall": true,
+    "recipients": [
+      { "name": "John Smith", "email": "jsmith@example.com", "phone": "+1-555-0123" },
+      { "name": "Facilities Team", "email": "facilities@example.com", "phone": null }
+    ]
+  }
+}

@@ -1,0 +1,115 @@
+{
+  "name": "BACnet Network Configuration",
+  "description": "Building automation network settings",
+  "lastUpdated": "2024-01-10T09:00:00Z",
+  "bacnet": {
+    "localDevice": {
+      "deviceId": 1000,
+      "deviceName": "Neo-BAS-Controller",
+      "vendorId": 999,
+      "vendorName": "Neo Building Systems",
+      "modelName": "Neo Controller v1.0",
+      "firmwareRevision": "1.0.0",
+      "applicationSoftwareVersion": "1.0.0"
+    },
+    "network": {
+      "port": 47808,
+      "networkNumber": 1,
+      "maxApduLength": 1476,
+      "segmentationSupport": "segmented-both",
+      "apduTimeout": 3000,
+      "apduRetries": 3
+    },
+    "broadcast": {
+      "address": "255.255.255.255",
+      "enabled": true
+    }
+  },
+  "discovery": {
+    "enabled": true,
+    "interval": 300,
+    "timeout": 5000,
+    "whoIsRange": {
+      "low": 0,
+      "high": 4194303
+    },
+    "autoAdd": false
+  },
+  "devices": [
+    {
+      "deviceId": 101,
+      "name": "VAV-101",
+      "address": "192.168.1.101",
+      "type": "vav",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    },
+    {
+      "deviceId": 102,
+      "name": "VAV-102",
+      "address": "192.168.1.102",
+      "type": "vav",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    },
+    {
+      "deviceId": 103,
+      "name": "VAV-103",
+      "address": "192.168.1.103",
+      "type": "vav",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    },
+    {
+      "deviceId": 104,
+      "name": "VAV-104",
+      "address": "192.168.1.104",
+      "type": "vav",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:34:00Z"
+    },
+    {
+      "deviceId": 105,
+      "name": "VAV-105",
+      "address": "192.168.1.105",
+      "type": "vav",
+      "status": "alarm",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    },
+    {
+      "deviceId": 1001,
+      "name": "AHU-001",
+      "address": "192.168.1.10",
+      "type": "ahu",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    },
+    {
+      "deviceId": 2001,
+      "name": "Boiler-001",
+      "address": "192.168.1.20",
+      "type": "boiler",
+      "status": "online",
+      "lastSeen": "2024-01-15T14:35:00Z"
+    }
+  ],
+  "polling": {
+    "fast": {
+      "interval": 5000,
+      "points": ["temperature", "setpoint", "status"]
+    },
+    "normal": {
+      "interval": 30000,
+      "points": ["damperPosition", "valvePosition", "fanSpeed"]
+    },
+    "slow": {
+      "interval": 300000,
+      "points": ["configuration", "alarmLimits"]
+    }
+  },
+  "cov": {
+    "enabled": true,
+    "lifetime": 300,
+    "resubscribeInterval": 240
+  }
+}

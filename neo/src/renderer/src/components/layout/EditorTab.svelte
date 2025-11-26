@@ -1,7 +1,7 @@
 <script lang="ts">
   import { editorStore, type EditorTab } from '$lib/stores/editor.svelte'
   import * as ContextMenu from '$lib/components/ui/context-menu'
-  import { X, Circle } from '@lucide/svelte'
+  import { X, Circle, Pin } from '@lucide/svelte'
 
   interface Props {
     tab: EditorTab
@@ -27,15 +27,37 @@
     editorStore.setActiveTab(tab.id, groupId)
   }
 
+  function handleDblClick() {
+    // Double-click promotes from preview or pins the tab
+    if (tab.isPreview) {
+      editorStore.promoteFromPreview(tab.id, groupId)
+    }
+  }
+
+  function handleMiddleClick(e: MouseEvent) {
+    if (e.button === 1) {
+      e.preventDefault()
+      editorStore.closeTab(tab.id, groupId)
+    }
+  }
+
+  function togglePin() {
+    if (tab.isPinned) {
+      editorStore.unpinTab(tab.id, groupId)
+    } else {
+      editorStore.pinTab(tab.id, groupId)
+    }
+  }
+
   function closeOtherTabs() {
-    const group = editorStore.layout.groups.get(groupId)
+    const group = editorStore.state.layout.groups[groupId]
     if (!group) return
     const otherTabs = group.tabs.filter((t) => t.id !== tab.id)
     otherTabs.forEach((t) => editorStore.closeTab(t.id, groupId))
   }
 
   function closeTabsToRight() {
-    const group = editorStore.layout.groups.get(groupId)
+    const group = editorStore.state.layout.groups[groupId]
     if (!group) return
     const tabIndex = group.tabs.findIndex((t) => t.id === tab.id)
     const tabsToClose = group.tabs.slice(tabIndex + 1)
@@ -59,32 +81,46 @@
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div
       {...props}
-      class="editor-tab flex items-center gap-1.5 px-3 h-[35px] text-sm border-r transition-colors cursor-pointer"
+      class="editor-tab flex items-center gap-1.5 h-[35px] text-sm border-r transition-colors cursor-pointer"
       class:active={isActive}
+      class:preview={tab.isPreview}
+      class:pinned={tab.isPinned}
       draggable="true"
       ondragstart={handleDragStart}
       onclick={handleClick}
+      ondblclick={handleDblClick}
+      onauxclick={handleMiddleClick}
       onkeydown={(e) => e.key === 'Enter' && handleClick()}
       role="tab"
       tabindex="0"
       aria-selected={isActive}
+      style="padding-left: {tab.isPinned ? '0.5rem' : '0.75rem'}; padding-right: {tab.isPinned ? '0.5rem' : '0.75rem'};"
     >
-      <!-- Dirty indicator or icon -->
-      {#if tab.dirty}
-        <Circle class="w-2 h-2 fill-current" />
+      <!-- Pinned indicator -->
+      {#if tab.isPinned}
+        <Pin class="w-3 h-3 shrink-0 opacity-70" />
       {/if}
 
-      <!-- Tab title -->
-      <span class="truncate max-w-[120px]">{tab.title}</span>
+      <!-- Dirty indicator -->
+      {#if tab.dirty}
+        <Circle class="w-2 h-2 fill-current shrink-0" />
+      {/if}
 
-      <!-- Close button -->
-      <button
-        class="close-btn p-0.5 rounded hover:bg-[var(--neo-list-hoverBackground)] opacity-0"
-        onclick={handleClose}
-        tabindex={-1}
-      >
-        <X class="w-3.5 h-3.5" />
-      </button>
+      <!-- Tab title (italic for preview) -->
+      <span class="truncate" class:italic={tab.isPreview} style="max-width: {tab.isPinned ? '60px' : '120px'};">
+        {tab.title}
+      </span>
+
+      <!-- Close button (hidden for pinned tabs unless hovered) -->
+      {#if !tab.isPinned}
+        <button
+          class="close-btn p-0.5 rounded hover:bg-[var(--neo-list-hoverBackground)] opacity-0"
+          onclick={handleClose}
+          tabindex={-1}
+        >
+          <X class="w-3.5 h-3.5" />
+        </button>
+      {/if}
     </div>
     {/snippet}
   </ContextMenu.Trigger>
@@ -93,6 +129,10 @@
     <ContextMenu.Item onclick={handleClose}>Close</ContextMenu.Item>
     <ContextMenu.Item onclick={closeOtherTabs}>Close Others</ContextMenu.Item>
     <ContextMenu.Item onclick={closeTabsToRight}>Close to the Right</ContextMenu.Item>
+    <ContextMenu.Separator />
+    <ContextMenu.Item onclick={togglePin}>
+      {tab.isPinned ? 'Unpin' : 'Pin'}
+    </ContextMenu.Item>
     <ContextMenu.Separator />
     <ContextMenu.Item onclick={splitRight}>Split Right</ContextMenu.Item>
     <ContextMenu.Item onclick={splitDown}>Split Down</ContextMenu.Item>

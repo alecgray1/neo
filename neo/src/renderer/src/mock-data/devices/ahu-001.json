@@ -1,0 +1,144 @@
+{
+  "deviceId": 1001,
+  "name": "AHU-001",
+  "description": "Air Handling Unit - Main Building",
+  "type": "ahu",
+  "manufacturer": "Carrier",
+  "model": "39M Aero",
+  "firmwareVersion": "3.1.0",
+  "location": {
+    "building": "Main Building",
+    "floor": "Mechanical Room",
+    "zone": "Central Plant"
+  },
+  "network": {
+    "macAddress": "00:1A:2B:3C:4D:10",
+    "ipAddress": "192.168.1.10",
+    "bacnetAddress": 1001,
+    "networkNumber": 1
+  },
+  "points": [
+    {
+      "name": "Supply Air Temperature",
+      "objectId": "AI:1",
+      "value": 55.2,
+      "units": "°F",
+      "description": "Supply air temperature leaving AHU"
+    },
+    {
+      "name": "Return Air Temperature",
+      "objectId": "AI:2",
+      "value": 74.1,
+      "units": "°F",
+      "description": "Return air temperature entering AHU"
+    },
+    {
+      "name": "Mixed Air Temperature",
+      "objectId": "AI:3",
+      "value": 62.5,
+      "units": "°F",
+      "description": "Mixed air temperature after dampers"
+    },
+    {
+      "name": "Outside Air Temperature",
+      "objectId": "AI:4",
+      "value": 45.0,
+      "units": "°F",
+      "description": "Outside air temperature"
+    },
+    {
+      "name": "Supply Fan Speed",
+      "objectId": "AO:1",
+      "value": 75,
+      "units": "%",
+      "description": "Supply fan VFD speed"
+    },
+    {
+      "name": "Return Fan Speed",
+      "objectId": "AO:2",
+      "value": 70,
+      "units": "%",
+      "description": "Return fan VFD speed"
+    },
+    {
+      "name": "Cooling Valve",
+      "objectId": "AO:3",
+      "value": 65,
+      "units": "%",
+      "description": "Chilled water valve position"
+    },
+    {
+      "name": "Heating Valve",
+      "objectId": "AO:4",
+      "value": 0,
+      "units": "%",
+      "description": "Hot water valve position"
+    },
+    {
+      "name": "Outside Air Damper",
+      "objectId": "AO:5",
+      "value": 25,
+      "units": "%",
+      "description": "Outside air damper position"
+    },
+    {
+      "name": "Supply Fan Status",
+      "objectId": "BI:1",
+      "value": true,
+      "description": "Supply fan running status"
+    },
+    {
+      "name": "Return Fan Status",
+      "objectId": "BI:2",
+      "value": true,
+      "description": "Return fan running status"
+    },
+    {
+      "name": "Filter Differential Pressure",
+      "objectId": "AI:5",
+      "value": 0.8,
+      "units": "inWC",
+      "description": "Filter pressure drop"
+    }
+  ],
+  "setpoints": {
+    "supplyAirTemp": 55,
+    "supplyAirTempMin": 50,
+    "supplyAirTempMax": 65,
+    "staticPressure": 1.5,
+    "minOutsideAir": 20,
+    "economizer": {
+      "enabled": true,
+      "highLimit": 65,
+      "lowLimit": 40
+    }
+  },
+  "alarms": [
+    {
+      "name": "Supply Fan Failure",
+      "condition": "command && !status",
+      "priority": "critical",
+      "enabled": true
+    },
+    {
+      "name": "High Filter DP",
+      "condition": "filterDP > 1.5",
+      "priority": "medium",
+      "enabled": true
+    },
+    {
+      "name": "Freezestat",
+      "condition": "mixedAirTemp < 38",
+      "priority": "critical",
+      "enabled": true
+    }
+  ],
+  "zones": [101, 102, 103, 104, 105, 106, 107, 108],
+  "capacity": {
+    "cfm": 15000,
+    "coolingTons": 50,
+    "heatingMBH": 500
+  },
+  "lastUpdated": "2024-01-15T14:30:00Z",
+  "status": "online"
+}

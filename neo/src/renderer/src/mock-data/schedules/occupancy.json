@@ -1,0 +1,97 @@
+{
+  "name": "Building Occupancy Schedule",
+  "description": "Weekly occupancy schedule for HVAC optimization",
+  "lastUpdated": "2024-01-10T09:00:00Z",
+  "timezone": "America/New_York",
+  "defaultSchedule": {
+    "monday": {
+      "occupied": [
+        { "start": "06:30", "end": "18:30" }
+      ],
+      "preCondition": 60,
+      "postCondition": 30
+    },
+    "tuesday": {
+      "occupied": [
+        { "start": "06:30", "end": "18:30" }
+      ],
+      "preCondition": 60,
+      "postCondition": 30
+    },
+    "wednesday": {
+      "occupied": [
+        { "start": "06:30", "end": "18:30" }
+      ],
+      "preCondition": 60,
+      "postCondition": 30
+    },
+    "thursday": {
+      "occupied": [
+        { "start": "06:30", "end": "18:30" }
+      ],
+      "preCondition": 60,
+      "postCondition": 30
+    },
+    "friday": {
+      "occupied": [
+        { "start": "06:30", "end": "17:00" }
+      ],
+      "preCondition": 60,
+      "postCondition": 30
+    },
+    "saturday": {
+      "occupied": [],
+      "preCondition": 0,
+      "postCondition": 0
+    },
+    "sunday": {
+      "occupied": [],
+      "preCondition": 0,
+      "postCondition": 0
+    }
+  },
+  "zoneOverrides": {
+    "203": {
+      "name": "Server Room",
+      "schedule": {
+        "monday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "tuesday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "wednesday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "thursday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "friday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "saturday": { "occupied": [{ "start": "00:00", "end": "23:59" }] },
+        "sunday": { "occupied": [{ "start": "00:00", "end": "23:59" }] }
+      },
+      "notes": "24/7 operation for server cooling"
+    },
+    "301": {
+      "name": "Lobby",
+      "schedule": {
+        "monday": { "occupied": [{ "start": "06:00", "end": "20:00" }] },
+        "tuesday": { "occupied": [{ "start": "06:00", "end": "20:00" }] },
+        "wednesday": { "occupied": [{ "start": "06:00", "end": "20:00" }] },
+        "thursday": { "occupied": [{ "start": "06:00", "end": "20:00" }] },
+        "friday": { "occupied": [{ "start": "06:00", "end": "20:00" }] },
+        "saturday": { "occupied": [{ "start": "08:00", "end": "14:00" }] },
+        "sunday": { "occupied": [] }
+      },
+      "notes": "Extended hours for building access"
+    }
+  },
+  "temporaryOverrides": [
+    {
+      "id": "OVR-001",
+      "date": "2024-01-20",
+      "zones": ["202"],
+      "occupied": [{ "start": "08:00", "end": "17:00" }],
+      "reason": "Saturday training session",
+      "createdBy": "admin"
+    }
+  ],
+  "occupancySensors": {
+    "enabled": true,
+    "timeout": 30,
+    "zones": ["101", "102", "201", "202"],
+    "action": "setback"
+  }
+}

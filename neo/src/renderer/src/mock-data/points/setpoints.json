@@ -1,0 +1,76 @@
+{
+  "name": "Building Setpoints",
+  "description": "Global and zone-specific temperature setpoint configurations",
+  "lastUpdated": "2024-01-15T08:00:00Z",
+  "global": {
+    "occupiedCooling": 74,
+    "occupiedHeating": 70,
+    "unoccupiedCooling": 85,
+    "unoccupiedHeating": 55,
+    "standby": {
+      "cooling": 78,
+      "heating": 65
+    },
+    "deadband": 2,
+    "humidityMin": 30,
+    "humidityMax": 60
+  },
+  "zones": {
+    "101": {
+      "name": "Conference Room A",
+      "occupiedCooling": 72,
+      "occupiedHeating": 70,
+      "override": false,
+      "notes": "User prefers cooler temps"
+    },
+    "102": {
+      "name": "Conference Room B",
+      "occupiedCooling": 74,
+      "occupiedHeating": 70,
+      "override": false,
+      "notes": null
+    },
+    "103": {
+      "name": "Open Office - East",
+      "occupiedCooling": 74,
+      "occupiedHeating": 70,
+      "override": false,
+      "notes": "High solar load in afternoon"
+    },
+    "201": {
+      "name": "Executive Suite",
+      "occupiedCooling": 72,
+      "occupiedHeating": 72,
+      "override": true,
+      "notes": "Executive override - narrower deadband"
+    },
+    "203": {
+      "name": "Server Room",
+      "occupiedCooling": 68,
+      "occupiedHeating": 65,
+      "override": true,
+      "notes": "Critical cooling - 24/7 operation"
+    }
+  },
+  "scheduleOverrides": [
+    {
+      "type": "temporary",
+      "zone": "202",
+      "startTime": "2024-01-15T13:00:00Z",
+      "endTime": "2024-01-15T17:00:00Z",
+      "cooling": 70,
+      "heating": 68,
+      "reason": "Large training session - extra cooling"
+    }
+  ],
+  "energySavings": {
+    "nightSetback": true,
+    "weekendSetback": true,
+    "holidayMode": false,
+    "demandResponse": {
+      "enabled": true,
+      "currentLevel": 0,
+      "maxLevel": 3
+    }
+  }
+}

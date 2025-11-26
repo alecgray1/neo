@@ -1,0 +1,113 @@
+{
+  "deviceId": 2001,
+  "name": "Boiler-001",
+  "description": "Primary Condensing Boiler",
+  "type": "boiler",
+  "manufacturer": "Lochinvar",
+  "model": "KNIGHT XL 850",
+  "firmwareVersion": "2.5.3",
+  "location": {
+    "building": "Main Building",
+    "floor": "Basement",
+    "zone": "Boiler Room"
+  },
+  "network": {
+    "macAddress": "00:1A:2B:3C:4D:20",
+    "ipAddress": "192.168.1.20",
+    "bacnetAddress": 2001,
+    "networkNumber": 1
+  },
+  "points": [
+    {
+      "name": "Supply Water Temperature",
+      "objectId": "AI:1",
+      "value": 145.0,
+      "units": "°F",
+      "description": "Hot water supply temperature"
+    },
+    {
+      "name": "Return Water Temperature",
+      "objectId": "AI:2",
+      "value": 125.0,
+      "units": "°F",
+      "description": "Hot water return temperature"
+    },
+    {
+      "name": "Flue Gas Temperature",
+      "objectId": "AI:3",
+      "value": 110.0,
+      "units": "°F",
+      "description": "Flue gas exit temperature"
+    },
+    {
+      "name": "Firing Rate",
+      "objectId": "AO:1",
+      "value": 45,
+      "units": "%",
+      "description": "Current firing rate"
+    },
+    {
+      "name": "Enable",
+      "objectId": "BO:1",
+      "value": true,
+      "description": "Boiler enable command"
+    },
+    {
+      "name": "Flame Status",
+      "objectId": "BI:1",
+      "value": true,
+      "description": "Flame proven status"
+    },
+    {
+      "name": "Pump Status",
+      "objectId": "BI:2",
+      "value": true,
+      "description": "Circulating pump status"
+    },
+    {
+      "name": "Supply Pressure",
+      "objectId": "AI:4",
+      "value": 15.5,
+      "units": "PSI",
+      "description": "System supply pressure"
+    }
+  ],
+  "setpoints": {
+    "supplyWaterTemp": 150,
+    "supplyWaterTempMin": 100,
+    "supplyWaterTempMax": 180,
+    "outdoorReset": {
+      "enabled": true,
+      "outdoor60": 120,
+      "outdoor0": 180
+    },
+    "differential": 10
+  },
+  "alarms": [
+    {
+      "name": "High Limit",
+      "condition": "supplyTemp > 190",
+      "priority": "critical",
+      "enabled": true
+    },
+    {
+      "name": "Low Water Flow",
+      "condition": "returnTemp - supplyTemp > 30",
+      "priority": "high",
+      "enabled": true
+    },
+    {
+      "name": "Flame Failure",
+      "condition": "enable && !flame",
+      "priority": "critical",
+      "enabled": true
+    }
+  ],
+  "efficiency": {
+    "afue": 95.5,
+    "inputMBH": 850,
+    "outputMBH": 811
+  },
+  "lastUpdated": "2024-01-15T14:28:00Z",
+  "status": "online"
+}

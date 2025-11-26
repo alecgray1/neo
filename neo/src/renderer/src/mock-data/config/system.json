@@ -1,0 +1,107 @@
+{
+  "name": "System Configuration",
+  "description": "Neo Building Automation System settings",
+  "version": "1.0.0",
+  "lastUpdated": "2024-01-15T09:00:00Z",
+  "building": {
+    "name": "Main Building",
+    "address": "123 Innovation Drive",
+    "city": "Tech City",
+    "state": "CA",
+    "zip": "94000",
+    "squareFeet": 50000,
+    "floors": 3,
+    "yearBuilt": 2015,
+    "timezone": "America/Los_Angeles"
+  },
+  "units": {
+    "temperature": "fahrenheit",
+    "pressure": "inWC",
+    "flow": "cfm",
+    "energy": "kWh"
+  },
+  "display": {
+    "dateFormat": "MM/DD/YYYY",
+    "timeFormat": "12h",
+    "decimalPlaces": 1,
+    "theme": "dark",
+    "refreshRate": 5000
+  },
+  "logging": {
+    "level": "info",
+    "retention": {
+      "alarms": 365,
+      "trends": 730,
+      "audit": 1825
+    },
+    "maxFileSize": "100MB"
+  },
+  "trending": {
+    "enabled": true,
+    "defaultInterval": 300,
+    "storage": {
+      "type": "local",
+      "path": "/data/trends",
+      "maxSize": "10GB"
+    }
+  },
+  "alarms": {
+    "enabled": true,
+    "soundEnabled": true,
+    "autoAcknowledge": false,
+    "escalation": {
+      "enabled": true,
+      "intervals": [15, 30, 60]
+    }
+  },
+  "security": {
+    "sessionTimeout": 30,
+    "maxLoginAttempts": 5,
+    "lockoutDuration": 15,
+    "passwordPolicy": {
+      "minLength": 8,
+      "requireUppercase": true,
+      "requireNumber": true,
+      "requireSpecial": true,
+      "expirationDays": 90
+    }
+  },
+  "users": [
+    {
+      "id": "admin",
+      "name": "Administrator",
+      "role": "admin",
+      "email": "admin@example.com"
+    },
+    {
+      "id": "jsmith",
+      "name": "John Smith",
+      "role": "operator",
+      "email": "jsmith@example.com"
+    },
+    {
+      "id": "viewer",
+      "name": "Read Only User",
+      "role": "viewer",
+      "email": "viewer@example.com"
+    }
+  ],
+  "integrations": {
+    "energyMetering": {
+      "enabled": true,
+      "provider": "Utility Connect",
+      "meterIds": ["MTR-001", "MTR-002"]
+    },
+    "weatherService": {
+      "enabled": true,
+      "provider": "OpenWeather",
+      "updateInterval": 900
+    }
+  },
+  "backup": {
+    "enabled": true,
+    "schedule": "0 2 * * *",
+    "retention": 30,
+    "location": "/backups"
+  }
+}

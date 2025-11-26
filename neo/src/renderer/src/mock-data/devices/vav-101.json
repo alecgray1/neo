@@ -1,0 +1,93 @@
+{
+  "deviceId": 101,
+  "name": "VAV-101",
+  "description": "Variable Air Volume Box - Zone 101",
+  "type": "vav",
+  "manufacturer": "Trane",
+  "model": "Tracer UC600",
+  "firmwareVersion": "4.2.1",
+  "location": {
+    "building": "Main Building",
+    "floor": 1,
+    "zone": "East Wing",
+    "room": "Conference Room A"
+  },
+  "network": {
+    "macAddress": "00:1A:2B:3C:4D:01",
+    "ipAddress": "192.168.1.101",
+    "bacnetAddress": 101,
+    "networkNumber": 1
+  },
+  "points": [
+    {
+      "name": "Zone Temperature",
+      "objectId": "AI:1",
+      "value": 72.5,
+      "units": "°F",
+      "description": "Current zone temperature"
+    },
+    {
+      "name": "Zone Temperature Setpoint",
+      "objectId": "AV:1",
+      "value": 72.0,
+      "units": "°F",
+      "description": "Desired zone temperature"
+    },
+    {
+      "name": "Damper Position",
+      "objectId": "AO:1",
+      "value": 45,
+      "units": "%",
+      "description": "VAV damper position"
+    },
+    {
+      "name": "Airflow",
+      "objectId": "AI:2",
+      "value": 350,
+      "units": "CFM",
+      "description": "Current airflow rate"
+    },
+    {
+      "name": "Reheat Valve",
+      "objectId": "AO:2",
+      "value": 0,
+      "units": "%",
+      "description": "Hot water reheat valve position"
+    },
+    {
+      "name": "Occupancy",
+      "objectId": "BI:1",
+      "value": true,
+      "description": "Zone occupancy status"
+    }
+  ],
+  "setpoints": {
+    "coolingOccupied": 74,
+    "heatingOccupied": 70,
+    "coolingUnoccupied": 80,
+    "heatingUnoccupied": 60,
+    "deadband": 2,
+    "minAirflow": 150,
+    "maxAirflow": 600
+  },
+  "alarms": [
+    {
+      "name": "High Zone Temperature",
+      "condition": "zoneTemp > setpoint + 5",
+      "priority": "medium",
+      "enabled": true
+    },
+    {
+      "name": "Low Airflow",
+      "condition": "airflow < minAirflow * 0.8",
+      "priority": "low",
+      "enabled": true
+    }
+  ],
+  "schedule": {
+    "weekday": { "start": "07:00", "end": "18:00" },
+    "weekend": { "start": "09:00", "end": "14:00" }
+  },
+  "lastUpdated": "2024-01-15T14:32:00Z",
+  "status": "online"
+}

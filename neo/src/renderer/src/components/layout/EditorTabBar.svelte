@@ -1,6 +1,7 @@
 <script lang="ts">
   import { editorStore, type EditorGroup } from '$lib/stores/editor.svelte'
   import EditorTab from './EditorTab.svelte'
+  import { Columns2 } from '@lucide/svelte'
 
   interface Props {
     group: EditorGroup
@@ -39,6 +40,13 @@
       // Invalid drop data
     }
   }
+
+  function handleSplitRight() {
+    if (group.activeTabId) {
+      const newGroupId = editorStore.splitGroup('horizontal', group.id)
+      editorStore.moveTab(group.activeTabId, newGroupId)
+    }
+  }
 </script>
 
 <!-- svelte-ignore a11y_interactive_supports_focus -->
@@ -57,6 +65,18 @@
 
   <!-- Empty space for drop target -->
   <div class="flex-1 h-full" ondragover={handleDragOver} ondrop={handleDrop} role="presentation"></div>
+
+  <!-- Actions -->
+  <div class="tab-actions flex items-center px-1 h-full shrink-0">
+    <button
+      class="split-btn p-1 rounded hover:bg-[var(--neo-toolbar-hoverBackground)] opacity-60 hover:opacity-100 transition-opacity"
+      onclick={handleSplitRight}
+      title="Split Editor Right"
+      disabled={!group.activeTabId}
+    >
+      <Columns2 class="w-4 h-4" />
+    </button>
+  </div>
 </div>
 
 <style>
@@ -76,5 +96,10 @@
   .editor-tab-bar.drag-over {
     outline: 2px solid var(--neo-tab-dragAndDropBorder);
     outline-offset: -2px;
+  }
+
+  .split-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
   }
 </style>
