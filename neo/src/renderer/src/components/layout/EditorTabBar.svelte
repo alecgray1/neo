@@ -102,11 +102,9 @@
   ondrop={handleDrop}
   role="tablist"
 >
-  {#key tabs}
-    {#each tabs as tab (tab.id)}
-      <EditorTab {tab} {groupId} oncontextmenu={handleTabContextMenu} />
-    {/each}
-  {/key}
+  {#each tabs as tab (tab.id)}
+    <EditorTab {tab} {groupId} oncontextmenu={handleTabContextMenu} />
+  {/each}
 
   <!-- Empty space for drop target -->
   <div class="flex-1 h-full" ondragover={handleDragOver} ondrop={handleDrop} role="presentation"></div>
