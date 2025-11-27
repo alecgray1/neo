@@ -5,6 +5,9 @@
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
   import { ChevronRight, ChevronDown, FileJson, Folder, FolderOpen } from '@lucide/svelte'
   import { mockFiles, type MockFile } from '../../mock-data'
+  import NeoContextMenu from '../contextmenu/NeoContextMenu.svelte'
+  import { MenuId } from '$lib/menus/menuId'
+  import { getContextKeyService } from '$lib/services/context'
 
   // Build file tree from mock files
   interface TreeNode {
@@ -99,6 +102,27 @@
     }
   }
 
+  // Create a scoped context for a tree node (for "when" clause evaluation)
+  function createNodeContext(node: TreeNode) {
+    const ctx = getContextKeyService().createScoped()
+    ctx.set('explorerResourceIsFile', node.type === 'file')
+    ctx.set('explorerResourceIsFolder', node.type === 'folder')
+    ctx.set('explorerResourcePath', node.uri ?? node.name)
+    ctx.set('explorerResourceName', node.name)
+    ctx.set('explorerFocus', true)
+    return ctx
+  }
+
+  // Create arg for explorer commands (VS Code pattern)
+  function createNodeArg(node: TreeNode) {
+    return {
+      resourcePath: node.uri ?? node.name,
+      resourceName: node.name,
+      isFile: node.type === 'file',
+      isFolder: node.type === 'folder'
+    }
+  }
+
   function getSidebarTitle(): string {
     switch (layoutStore.state.activeActivityItem) {
       case 'explorer':
@@ -160,29 +184,35 @@
 </div>
 
 {#snippet treeItem(item: TreeNode, depth: number)}
+  {@const nodeContext = createNodeContext(item)}
+  {@const nodeArg = createNodeArg(item)}
   <div class="tree-item">
-    <button
-      class="tree-row w-full flex items-center gap-1 py-0.5 text-sm hover:bg-[var(--neo-list-hoverBackground)] rounded-sm"
-      style="padding-left: {depth * 12 + 4}px;"
-      onclick={(e) => handleFileClick(item, e)}
-      ondblclick={() => handleFileDblClick(item)}
-      draggable={item.type === 'file'}
-      ondragstart={(e) => handleDragStart(e, item)}
-    >
-      {#if item.type === 'folder'}
-        {#if item.expanded}
-          <ChevronDown class="w-4 h-4 shrink-0" />
-          <FolderOpen class="w-4 h-4 shrink-0 text-yellow-500" />
-        {:else}
-          <ChevronRight class="w-4 h-4 shrink-0" />
-          <Folder class="w-4 h-4 shrink-0 text-yellow-500" />
-        {/if}
-      {:else}
-        <span class="w-4"></span>
-        <FileJson class="w-4 h-4 shrink-0 text-yellow-400" />
-      {/if}
-      <span class="truncate">{item.name}</span>
-    </button>
+    <NeoContextMenu menuId={MenuId.ExplorerContext} contextKeyService={nodeContext} arg={nodeArg}>
+      {#snippet children()}
+        <button
+          class="tree-row w-full flex items-center gap-1 py-0.5 text-sm hover:bg-[var(--neo-list-hoverBackground)] rounded-sm"
+          style="padding-left: {depth * 12 + 4}px;"
+          onclick={(e) => handleFileClick(item, e)}
+          ondblclick={() => handleFileDblClick(item)}
+          draggable={item.type === 'file'}
+          ondragstart={(e) => handleDragStart(e, item)}
+        >
+          {#if item.type === 'folder'}
+            {#if item.expanded}
+              <ChevronDown class="w-4 h-4 shrink-0" />
+              <FolderOpen class="w-4 h-4 shrink-0 text-yellow-500" />
+            {:else}
+              <ChevronRight class="w-4 h-4 shrink-0" />
+              <Folder class="w-4 h-4 shrink-0 text-yellow-500" />
+            {/if}
+          {:else}
+            <span class="w-4"></span>
+            <FileJson class="w-4 h-4 shrink-0 text-yellow-400" />
+          {/if}
+          <span class="truncate">{item.name}</span>
+        </button>
+      {/snippet}
+    </NeoContextMenu>
 
     {#if item.type === 'folder' && item.expanded && item.children}
       {#each item.children as child}

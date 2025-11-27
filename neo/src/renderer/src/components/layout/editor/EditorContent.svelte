@@ -6,6 +6,9 @@
   import KeybindingsEditor from '../../keybindings/KeybindingsEditor.svelte'
   import SettingsEditor from '../../settings/SettingsEditor.svelte'
   import { FileText, ChevronRight } from '@lucide/svelte'
+  import NeoContextMenu from '../../contextmenu/NeoContextMenu.svelte'
+  import { MenuId } from '$lib/menus/menuId'
+  import { getContextKeyService } from '$lib/services/context'
 
   interface Props {
     uri: string
@@ -14,6 +17,25 @@
   let { uri }: Props = $props()
 
   let document = $derived(documentStore.get(uri))
+
+  // Create editor context with relevant keys
+  const editorContext = getContextKeyService().createScoped()
+
+  // Update editor context when document changes (for "when" clause evaluation)
+  $effect(() => {
+    const hasSelection = window.getSelection()?.toString().length ?? 0 > 0
+    editorContext.set('editorFocus', true)
+    editorContext.set('editorReadOnly', true) // Our current editors are read-only
+    editorContext.set('hasSelection', hasSelection)
+    editorContext.set('languageId', document?.language ?? 'plaintext')
+    editorContext.set('editorUri', uri)
+  })
+
+  // Editor arg for commands (VS Code pattern)
+  let editorArg = $derived({
+    uri: uri,
+    languageId: document?.language ?? 'plaintext'
+  })
 
   // Parse path for breadcrumb
   let pathParts = $derived(() => {
@@ -69,14 +91,18 @@
       </div>
     {:else}
       <ScrollArea class="flex-1">
-        <div class="content-wrapper" style="color: var(--neo-editor-foreground);">
-          {#if document.language === 'json'}
-            <JsonViewer content={document.content} />
-          {:else}
-            <!-- Plain text fallback -->
-            <pre class="p-4 text-sm font-mono whitespace-pre-wrap">{document.content}</pre>
-          {/if}
-        </div>
+        <NeoContextMenu menuId={MenuId.EditorContext} contextKeyService={editorContext} arg={editorArg}>
+          {#snippet children()}
+            <div class="content-wrapper" style="color: var(--neo-editor-foreground);">
+              {#if document.language === 'json'}
+                <JsonViewer content={document.content} />
+              {:else}
+                <!-- Plain text fallback -->
+                <pre class="p-4 text-sm font-mono whitespace-pre-wrap">{document.content}</pre>
+              {/if}
+            </div>
+          {/snippet}
+        </NeoContextMenu>
       </ScrollArea>
     {/if}
 

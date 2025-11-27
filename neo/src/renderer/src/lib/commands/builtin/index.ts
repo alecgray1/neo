@@ -8,11 +8,13 @@ import { registerKeybinding } from '$lib/keybindings/registry'
 import { viewCommands } from './view'
 import { fileCommands } from './file'
 import { editCommands } from './edit'
+import { tabCommands } from './tab'
+import { explorerCommands } from './explorer'
 
 /**
  * All built-in commands
  */
-export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands]
+export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands, ...tabCommands, ...explorerCommands]
 
 /**
  * Register all built-in commands

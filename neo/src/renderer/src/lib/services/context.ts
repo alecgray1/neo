@@ -7,10 +7,21 @@ import { createServiceId, type IDisposable, toDisposable, Emitter, type Event } 
  */
 export const IContextKeyService = createServiceId<IContextKeyService>('IContextKeyService')
 
+/** DOM attribute name for context binding */
+const CONTEXT_ID_ATTR = 'data-neo-context-id'
+
+/** Context ID counter */
+let _nextContextId = 1
+
+/** Registry of context instances by ID */
+const _contextRegistry = new Map<number, ContextKeyService>()
+
 /**
  * Context key service interface
  */
 export interface IContextKeyService {
+  /** Unique ID for this context instance */
+  readonly contextId: number
   /** Set a context value */
   set(key: string, value: unknown): void
   /** Get a context value */
@@ -23,6 +34,8 @@ export interface IContextKeyService {
   onDidChange: Event<string>
   /** Create a scoped context that inherits from this one */
   createScoped(): IContextKeyService
+  /** Bind this context to a DOM element */
+  bindToElement(element: HTMLElement): IDisposable
 }
 
 // Token types for the expression parser
@@ -85,9 +98,34 @@ function tokenize(expr: string): Token[] {
       i += 2
       continue
     }
+    if (ch === '=' && expr[i + 1] === '~') {
+      tokens.push({ type: 'operator', value: '=~' })
+      i += 2
+      continue
+    }
     if (ch === '!' && expr[i + 1] === '=') {
       tokens.push({ type: 'operator', value: '!=' })
       i += 2
+      continue
+    }
+    if (ch === '<' && expr[i + 1] === '=') {
+      tokens.push({ type: 'operator', value: '<=' })
+      i += 2
+      continue
+    }
+    if (ch === '>' && expr[i + 1] === '=') {
+      tokens.push({ type: 'operator', value: '>=' })
+      i += 2
+      continue
+    }
+    if (ch === '<') {
+      tokens.push({ type: 'operator', value: '<' })
+      i++
+      continue
+    }
+    if (ch === '>') {
+      tokens.push({ type: 'operator', value: '>' })
+      i++
       continue
     }
 
@@ -116,7 +154,7 @@ function tokenize(expr: string): Token[] {
       continue
     }
 
-    // Identifier (including true/false)
+    // Identifier (including true/false/in/not)
     if (/[a-zA-Z_]/.test(ch)) {
       let id = ''
       while (i < expr.length && /[a-zA-Z0-9_.]/.test(expr[i])) {
@@ -127,6 +165,23 @@ function tokenize(expr: string): Token[] {
         tokens.push({ type: 'boolean', value: true })
       } else if (id === 'false') {
         tokens.push({ type: 'boolean', value: false })
+      } else if (id === 'in') {
+        tokens.push({ type: 'operator', value: 'in' })
+      } else if (id === 'not') {
+        // Look ahead for 'in' to form 'not in'
+        const remaining = expr.slice(i).trimStart()
+        if (remaining.startsWith('in')) {
+          // Skip whitespace between 'not' and 'in'
+          while (i < expr.length && /\s/.test(expr[i])) {
+            i++
+          }
+          // Skip 'in'
+          i += 2
+          tokens.push({ type: 'operator', value: 'not in' })
+        } else {
+          // Just 'not' as an identifier
+          tokens.push({ type: 'identifier', value: id })
+        }
       } else {
         tokens.push({ type: 'identifier', value: id })
       }
@@ -194,13 +249,56 @@ function parseComparison(
   const left = parsePrimary(tokens, context, pos)
 
   const token = tokens[pos.i]
-  if (token?.type === 'operator' && (token.value === '==' || token.value === '!=')) {
-    pos.i++
-    const right = parsePrimary(tokens, context, pos)
-    if (token.value === '==') {
-      return left === right
-    } else {
-      return left !== right
+  if (token?.type === 'operator') {
+    const op = token.value
+    if (op === '==' || op === '!=' || op === '<' || op === '<=' || op === '>' || op === '>=' || op === '=~' || op === 'in' || op === 'not in') {
+      pos.i++
+      const right = parsePrimary(tokens, context, pos)
+
+      switch (op) {
+        case '==':
+          return left === right
+        case '!=':
+          return left !== right
+        case '<':
+          return Number(left) < Number(right)
+        case '<=':
+          return Number(left) <= Number(right)
+        case '>':
+          return Number(left) > Number(right)
+        case '>=':
+          return Number(left) >= Number(right)
+        case '=~': {
+          // Regex match: value =~ /pattern/
+          const pattern = String(right).replace(/^\/|\/$/g, '')
+          try {
+            const regex = new RegExp(pattern)
+            return regex.test(String(left))
+          } catch {
+            return false
+          }
+        }
+        case 'in': {
+          // Membership: value in list (list can be array or string)
+          if (Array.isArray(right)) {
+            return right.includes(left)
+          }
+          if (typeof right === 'string') {
+            return right.includes(String(left))
+          }
+          return false
+        }
+        case 'not in': {
+          // Inverse membership
+          if (Array.isArray(right)) {
+            return !right.includes(left)
+          }
+          if (typeof right === 'string') {
+            return !right.includes(String(left))
+          }
+          return true
+        }
+      }
     }
   }
 
@@ -257,8 +355,13 @@ class ContextKeyService implements IContextKeyService, IDisposable {
   private _parent: ContextKeyService | null
   private _onDidChange = new Emitter<string>()
 
+  /** Unique ID for this context instance */
+  readonly contextId: number
+
   constructor(parent: ContextKeyService | null = null) {
     this._parent = parent
+    this.contextId = _nextContextId++
+    _contextRegistry.set(this.contextId, this)
   }
 
   get onDidChange(): Event<string> {
@@ -322,9 +425,33 @@ class ContextKeyService implements IContextKeyService, IDisposable {
     return new ContextKeyService(this)
   }
 
+  bindToElement(element: HTMLElement): IDisposable {
+    element.setAttribute(CONTEXT_ID_ATTR, String(this.contextId))
+    return toDisposable(() => {
+      element.removeAttribute(CONTEXT_ID_ATTR)
+    })
+  }
+
   dispose(): void {
+    _contextRegistry.delete(this.contextId)
     this._onDidChange.dispose()
   }
+}
+
+/**
+ * Get a context service from a DOM element by walking up the tree
+ * Returns the first context found or the global context as fallback
+ */
+export function getContextFromElement(element: HTMLElement | null): IContextKeyService {
+  while (element) {
+    const id = element.getAttribute(CONTEXT_ID_ATTR)
+    if (id) {
+      const ctx = _contextRegistry.get(Number(id))
+      if (ctx) return ctx
+    }
+    element = element.parentElement
+  }
+  return getContextKeyService() // fallback to global
 }
 
 // Global context key service instance

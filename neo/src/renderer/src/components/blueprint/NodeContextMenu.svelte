@@ -1,6 +1,5 @@
 <script lang="ts">
   import { nodeRegistry } from '$lib/blueprint/registry'
-  import { ChevronRight } from '@lucide/svelte'
 
   interface Props {
     x: number
@@ -11,9 +10,8 @@
 
   let { x, y, onselect, onclose }: Props = $props()
 
-  // Get categorized nodes
+  // Get all nodes grouped by category
   let categories = $derived(nodeRegistry.getCategories())
-  let expandedCategory = $state<string | null>(null)
 
   // Search state
   let searchQuery = $state('')
@@ -45,10 +43,6 @@
       onclose()
     }
   }
-
-  function toggleCategory(category: string) {
-    expandedCategory = expandedCategory === category ? null : category
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -71,7 +65,7 @@
   <div class="menu-content">
     {#if filteredNodes && filteredNodes.length > 0}
       <!-- Search results -->
-      <div class="search-results">
+      <div class="node-list">
         {#each filteredNodes as node}
           <button class="menu-item" onclick={() => handleSelect(node.id)}>
             <span class="node-name">{node.name}</span>
@@ -82,34 +76,23 @@
     {:else if filteredNodes && filteredNodes.length === 0}
       <div class="no-results">No nodes found</div>
     {:else}
-      <!-- Category view -->
-      {#each categories as category}
-        <div class="category">
-          <button class="category-header" onclick={() => toggleCategory(category)}>
-            <ChevronRight
-              class="chevron"
-              style="transform: rotate({expandedCategory === category ? '90deg' : '0deg'})"
-            />
-            <span>{category}</span>
-          </button>
-
-          {#if expandedCategory === category}
-            <div class="category-items">
-              {#each nodeRegistry.getByCategory(category) as node}
-                <button class="menu-item" onclick={() => handleSelect(node.id)}>
-                  <span class="node-name">{node.name}</span>
-                  {#if node.pure}
-                    <span class="badge pure">Pure</span>
-                  {/if}
-                  {#if node.latent}
-                    <span class="badge latent">Async</span>
-                  {/if}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/each}
+      <!-- All nodes grouped by category (no submenus) -->
+      <div class="node-list">
+        {#each categories as category}
+          <div class="category-label">{category}</div>
+          {#each nodeRegistry.getByCategory(category) as node}
+            <button class="menu-item" onclick={() => handleSelect(node.id)}>
+              <span class="node-name">{node.name}</span>
+              {#if node.pure}
+                <span class="badge pure">Pure</span>
+              {/if}
+              {#if node.latent}
+                <span class="badge latent">Async</span>
+              {/if}
+            </button>
+          {/each}
+        {/each}
+      </div>
     {/if}
   </div>
 </div>
@@ -162,44 +145,20 @@
 
   .menu-content {
     overflow-y: auto;
-    max-height: 350px;
+    max-height: 400px;
   }
 
-  .category {
-    border-bottom: 1px solid var(--neo-blueprint-menu-border);
+  .node-list {
+    padding: 4px 0;
   }
 
-  .category:last-child {
-    border-bottom: none;
-  }
-
-  .category-header {
-    width: 100%;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 10px;
-    background: transparent;
-    border: none;
-    color: var(--neo-foreground);
-    font-size: 12px;
+  .category-label {
+    padding: 6px 10px 4px;
+    font-size: 10px;
     font-weight: 600;
-    cursor: pointer;
-    text-align: left;
-  }
-
-  .category-header:hover {
-    background: var(--neo-list-hoverBackground);
-  }
-
-  .category-header :global(.chevron) {
-    width: 14px;
-    height: 14px;
-    transition: transform 0.15s ease;
-  }
-
-  .category-items {
-    background: var(--neo-blueprint-menu-categoryBackground);
+    text-transform: uppercase;
+    color: var(--neo-blueprint-node-pinLabel);
+    letter-spacing: 0.5px;
   }
 
   .menu-item {
@@ -207,7 +166,7 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 6px 10px 6px 30px;
+    padding: 5px 10px;
     background: transparent;
     border: none;
     color: var(--neo-foreground);
@@ -245,14 +204,6 @@
   .badge.latent {
     background: var(--neo-blueprint-node-borderLatent);
     color: white;
-  }
-
-  .search-results {
-    padding: 4px 0;
-  }
-
-  .search-results .menu-item {
-    padding-left: 10px;
   }
 
   .no-results {

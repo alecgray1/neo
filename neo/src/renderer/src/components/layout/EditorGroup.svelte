@@ -12,9 +12,9 @@
 
   let { groupId }: Props = $props()
 
-  let group = $derived(editorStore.state.layout.groups[groupId])
+  let group = $derived(editorStore.getGroup(groupId))
   let activeTab = $derived(group?.tabs.find((t) => t.id === group?.activeTabId))
-  let isActiveGroup = $derived(editorStore.state.activeGroupId === groupId)
+  let isActiveGroup = $derived(editorStore.activeGroupId === groupId)
 
   // Drop overlay state
   let showDropOverlay = $state(false)
@@ -150,7 +150,7 @@
     onclick={handleClick}
   >
     <!-- Tab Bar -->
-    <EditorTabBar {group} />
+    <EditorTabBar {groupId} />
 
     <!-- Content Area with Drop Target -->
     <div

@@ -3,7 +3,7 @@
   import { editorStore, type EditorLayoutNode } from '$lib/stores/editor.svelte'
   import EditorGroup from './EditorGroup.svelte'
 
-  let layout = $derived(editorStore.state.layout)
+  let layout = $derived(editorStore.layout)
 
   // Resizer classes
   const hResizerClass =
