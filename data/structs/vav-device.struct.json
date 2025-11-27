@@ -1,0 +1,41 @@
+{
+  "id": "vav-device",
+  "name": "VAV Device",
+  "version": "1.0.0",
+  "description": "Standard Variable Air Volume box device type",
+  "fields": [
+    {
+      "name": "zone_temp",
+      "type": { "type": "Real" },
+      "description": "Current zone temperature",
+      "units": "degF"
+    },
+    {
+      "name": "setpoint",
+      "type": { "type": "Real" },
+      "default": 72.0,
+      "description": "Temperature setpoint",
+      "units": "degF"
+    },
+    {
+      "name": "damper_cmd",
+      "type": { "type": "Real" },
+      "default": 0.0,
+      "description": "Damper command output",
+      "units": "%"
+    },
+    {
+      "name": "heating_cmd",
+      "type": { "type": "Real" },
+      "default": 0.0,
+      "description": "Heating command output",
+      "units": "%"
+    },
+    {
+      "name": "occupied",
+      "type": { "type": "Boolean" },
+      "default": false,
+      "description": "Occupancy status"
+    }
+  ]
+}

@@ -1,0 +1,121 @@
+{
+  "id": "example-with-functions",
+  "name": "Example Blueprint with Functions",
+  "version": "1.0.0",
+  "description": "Demonstrates the use of functions within blueprints",
+  "functions": {
+    "calculate_error": {
+      "name": "Calculate Error",
+      "description": "Calculate the error between current and setpoint with deadband check",
+      "pure": true,
+      "inputs": [
+        { "name": "current", "type": { "type": "Real" } },
+        { "name": "setpoint", "type": { "type": "Real" } },
+        { "name": "deadband", "type": { "type": "Real" }, "default": 1.0 }
+      ],
+      "outputs": [
+        { "name": "error", "type": { "type": "Real" } },
+        { "name": "in_deadband", "type": { "type": "Boolean" } }
+      ],
+      "nodes": [
+        {
+          "id": "__entry__",
+          "type": "neo/FunctionEntry",
+          "position": { "x": 0, "y": 0 },
+          "config": {}
+        },
+        {
+          "id": "subtract",
+          "type": "neo/Subtract",
+          "position": { "x": 200, "y": 0 },
+          "config": {}
+        },
+        {
+          "id": "abs",
+          "type": "neo/Abs",
+          "position": { "x": 300, "y": 50 },
+          "config": {}
+        },
+        {
+          "id": "deadband-check",
+          "type": "neo/Compare",
+          "position": { "x": 400, "y": 50 },
+          "config": { "operator": "<=" }
+        },
+        {
+          "id": "__exit__",
+          "type": "neo/FunctionExit",
+          "position": { "x": 600, "y": 0 },
+          "config": {}
+        }
+      ],
+      "connections": [
+        { "from": "__entry__.current", "to": "subtract.a" },
+        { "from": "__entry__.setpoint", "to": "subtract.b" },
+        { "from": "subtract.result", "to": "__exit__.error" },
+        { "from": "subtract.result", "to": "abs.value" },
+        { "from": "abs.result", "to": "deadband-check.a" },
+        { "from": "__entry__.deadband", "to": "deadband-check.b" },
+        { "from": "deadband-check.result", "to": "__exit__.in_deadband" }
+      ]
+    }
+  },
+  "exports": ["calculate_error"],
+  "variables": {
+    "current_temp": {
+      "type": { "type": "Real" },
+      "default": 72.0,
+      "description": "Current temperature reading"
+    },
+    "setpoint": {
+      "type": { "type": "Real" },
+      "default": 70.0,
+      "description": "Temperature setpoint"
+    }
+  },
+  "nodes": [
+    {
+      "id": "on-event",
+      "type": "neo/OnEvent",
+      "position": { "x": 0, "y": 0 },
+      "config": { "event_type": "temperature_update" }
+    },
+    {
+      "id": "call-error-calc",
+      "type": "neo/CallFunction",
+      "position": { "x": 200, "y": 0 },
+      "config": { "function": "calculate_error" }
+    },
+    {
+      "id": "branch",
+      "type": "neo/Branch",
+      "position": { "x": 400, "y": 0 },
+      "config": {}
+    },
+    {
+      "id": "log-in-deadband",
+      "type": "neo/Log",
+      "position": { "x": 600, "y": -50 },
+      "config": {
+        "defaults": { "message": "Temperature is within deadband" },
+        "level": "info"
+      }
+    },
+    {
+      "id": "log-out-deadband",
+      "type": "neo/Log",
+      "position": { "x": 600, "y": 50 },
+      "config": {
+        "defaults": { "message": "Temperature is outside deadband - control needed" },
+        "level": "warn"
+      }
+    }
+  ],
+  "connections": [
+    { "from": "on-event.exec", "to": "call-error-calc.exec" },
+    { "from": "call-error-calc.exec", "to": "branch.exec" },
+    { "from": "call-error-calc.in_deadband", "to": "branch.condition" },
+    { "from": "branch.true", "to": "log-in-deadband.exec" },
+    { "from": "branch.false", "to": "log-out-deadband.exec" }
+  ]
+}

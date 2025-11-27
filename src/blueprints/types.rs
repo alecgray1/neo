@@ -40,6 +40,8 @@ pub enum PinType {
     PointValue,
     /// Array of a specific type
     Array { element: Box<PinType> },
+    /// User-defined struct type
+    Struct { struct_id: String },
     /// Dynamic type (serde_json::Value) - accepts anything
     Any,
 }
@@ -65,6 +67,8 @@ impl PinType {
             (PinType::Array { element: a }, PinType::Array { element: b }) => {
                 a.is_compatible_with(b)
             }
+            // Struct compatibility - must be same struct type
+            (PinType::Struct { struct_id: a }, PinType::Struct { struct_id: b }) => a == b,
             _ => false,
         }
     }
@@ -248,6 +252,76 @@ pub struct VariableDef {
     pub description: Option<String>,
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Function Definitions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Special node ID for function entry point
+pub const FUNCTION_ENTRY_NODE: &str = "__entry__";
+/// Special node ID for function exit point
+pub const FUNCTION_EXIT_NODE: &str = "__exit__";
+
+/// A parameter for a function (input or output)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionParam {
+    /// Parameter name
+    pub name: String,
+    /// Parameter type
+    #[serde(rename = "type")]
+    pub param_type: PinType,
+    /// Default value for input parameters
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    /// Human-readable description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+/// A function definition within a blueprint
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FunctionDef {
+    /// Function name (for display)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Human-readable description
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Input parameters (become output pins on entry node)
+    #[serde(default)]
+    pub inputs: Vec<FunctionParam>,
+    /// Output values (become input pins on exit node)
+    #[serde(default)]
+    pub outputs: Vec<FunctionParam>,
+    /// Whether this is a pure function (no side effects, no exec pins)
+    #[serde(default)]
+    pub pure: bool,
+    /// Nodes within this function's graph
+    #[serde(default)]
+    pub nodes: Vec<BlueprintNode>,
+    /// Connections within this function's graph
+    #[serde(default)]
+    pub connections: Vec<Connection>,
+}
+
+impl FunctionDef {
+    /// Get a node by ID within this function
+    pub fn get_node(&self, id: &str) -> Option<&BlueprintNode> {
+        self.nodes.iter().find(|n| n.id == id)
+    }
+
+    /// Get connections from a specific node and pin within this function
+    pub fn connections_from(&self, node_id: &str, pin_name: &str) -> Vec<&Connection> {
+        let prefix = format!("{}.{}", node_id, pin_name);
+        self.connections.iter().filter(|c| c.from == prefix).collect()
+    }
+
+    /// Get connections to a specific node and pin within this function
+    pub fn connections_to(&self, node_id: &str, pin_name: &str) -> Vec<&Connection> {
+        let prefix = format!("{}.{}", node_id, pin_name);
+        self.connections.iter().filter(|c| c.to == prefix).collect()
+    }
+}
+
 /// Position in the visual editor (for UI purposes)
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 pub struct Position {
@@ -325,6 +399,18 @@ pub struct Blueprint {
     /// Connections between nodes
     #[serde(default)]
     pub connections: Vec<Connection>,
+    /// Functions defined in this blueprint (name -> definition)
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub functions: HashMap<String, FunctionDef>,
+    /// Imported blueprints (for calling their exported functions)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub imports: Vec<String>,
+    /// Exported functions (can be called from other blueprints)
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exports: Vec<String>,
+    /// Behaviours this blueprint implements
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub implements: Vec<String>,
 }
 
 fn default_version() -> String {
@@ -368,7 +454,21 @@ impl Blueprint {
             variables: HashMap::new(),
             nodes: Vec::new(),
             connections: Vec::new(),
+            functions: HashMap::new(),
+            imports: Vec::new(),
+            exports: Vec::new(),
+            implements: Vec::new(),
         }
+    }
+
+    /// Get a function by name
+    pub fn get_function(&self, name: &str) -> Option<&FunctionDef> {
+        self.functions.get(name)
+    }
+
+    /// Check if a function is exported
+    pub fn is_function_exported(&self, name: &str) -> bool {
+        self.exports.contains(&name.to_string())
     }
 
     /// Check if this blueprint should be registered as a service

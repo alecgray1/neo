@@ -305,6 +305,12 @@ fn register_builtin_nodes(registry: &mut NodeRegistry) {
     register_variable_nodes(registry);
     register_random_string(registry);
 
+    // Struct operations
+    register_struct_nodes(registry);
+
+    // Function nodes
+    register_function_nodes(registry);
+
     // Latent (async) nodes
     register_latent_nodes(registry);
     register_set_timer(registry);
@@ -574,6 +580,27 @@ fn register_math_nodes(registry: &mut NodeRegistry) {
         NodeOutput::pure(values)
     });
 
+    // Abs (absolute value)
+    let def = NodeDef {
+        id: "neo/Abs".to_string(),
+        name: "Absolute Value".to_string(),
+        category: "Math".to_string(),
+        pure: true,
+        latent: false,
+        pins: vec![
+            PinDef::data_in("value", PinType::Real),
+            PinDef::data_out("result", PinType::Real),
+        ],
+        description: Some("Return the absolute value of a number".to_string()),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let value = ctx.get_input_real("value").unwrap_or(0.0);
+        let mut values = HashMap::new();
+        values.insert("result".to_string(), Value::from(value.abs()));
+        NodeOutput::pure(values)
+    });
+
     // Clamp
     let def = NodeDef {
         id: "neo/Clamp".to_string(),
@@ -720,6 +747,221 @@ fn register_random_string(registry: &mut NodeRegistry) {
 
         let mut values = HashMap::new();
         values.insert("result".to_string(), Value::String(result));
+        NodeOutput::continue_default(values)
+    });
+}
+
+fn register_struct_nodes(registry: &mut NodeRegistry) {
+    // CreateStruct - create a struct instance from field values
+    let def = NodeDef {
+        id: "neo/CreateStruct".to_string(),
+        name: "Create Struct".to_string(),
+        category: "Structs".to_string(),
+        pure: true,
+        latent: false,
+        pins: vec![
+            // Dynamic pins based on struct_id config - for now just generic inputs
+            PinDef::data_in("fields", PinType::Any),
+            PinDef::data_out("struct", PinType::Any),
+        ],
+        description: Some(
+            "Create a struct instance. Configure struct type via config.struct_id. Pass fields as JSON object.".to_string()
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let fields = ctx.get_input("fields").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+
+        // The struct is just a JSON object with a type marker
+        let struct_id = ctx.get_config_string("struct_id").unwrap_or("unknown");
+        let mut obj = match fields {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        obj.insert("__struct_type__".to_string(), Value::String(struct_id.to_string()));
+
+        let mut values = HashMap::new();
+        values.insert("struct".to_string(), Value::Object(obj));
+        NodeOutput::pure(values)
+    });
+
+    // GetField - get a field value from a struct
+    let def = NodeDef {
+        id: "neo/GetField".to_string(),
+        name: "Get Field".to_string(),
+        category: "Structs".to_string(),
+        pure: true,
+        latent: false,
+        pins: vec![
+            PinDef::data_in("struct", PinType::Any),
+            PinDef::data_out("value", PinType::Any),
+        ],
+        description: Some(
+            "Get a field value from a struct. Configure field name via config.field".to_string()
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let struct_val = ctx.get_input("struct");
+        let field_name = ctx.get_config_string("field").unwrap_or("");
+
+        let value = struct_val
+            .and_then(|v| v.get(field_name))
+            .cloned()
+            .unwrap_or(Value::Null);
+
+        let mut values = HashMap::new();
+        values.insert("value".to_string(), value);
+        NodeOutput::pure(values)
+    });
+
+    // SetField - create a new struct with a field value changed (immutable)
+    let def = NodeDef {
+        id: "neo/SetField".to_string(),
+        name: "Set Field".to_string(),
+        category: "Structs".to_string(),
+        pure: true,
+        latent: false,
+        pins: vec![
+            PinDef::data_in("struct", PinType::Any),
+            PinDef::data_in("value", PinType::Any),
+            PinDef::data_out("result", PinType::Any),
+        ],
+        description: Some(
+            "Create a new struct with a field value changed. Configure field name via config.field".to_string()
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let struct_val = ctx.get_input("struct").cloned().unwrap_or(Value::Null);
+        let new_value = ctx.get_input("value").cloned().unwrap_or(Value::Null);
+        let field_name = ctx.get_config_string("field").unwrap_or("");
+
+        // Clone the struct and update the field
+        let result = match struct_val {
+            Value::Object(mut map) => {
+                map.insert(field_name.to_string(), new_value);
+                Value::Object(map)
+            }
+            _ => Value::Null,
+        };
+
+        let mut values = HashMap::new();
+        values.insert("result".to_string(), result);
+        NodeOutput::pure(values)
+    });
+}
+
+fn register_function_nodes(registry: &mut NodeRegistry) {
+    // FunctionEntry - entry point for a function, exposes input parameters as outputs
+    let def = NodeDef {
+        id: "neo/FunctionEntry".to_string(),
+        name: "Function Entry".to_string(),
+        category: "Functions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            // Dynamic output pins based on function inputs - using Any for generic case
+            PinDef::exec_out("exec"),
+        ],
+        description: Some(
+            "Entry point for a function. Input parameters appear as output pins. This node's ID must be '__entry__'.".to_string()
+        ),
+    };
+
+    // FunctionEntry just passes through - the executor sets up the input values
+    registry.register_fn(def, |_ctx| {
+        NodeOutput::continue_default(HashMap::new())
+    });
+
+    // FunctionExit - exit point for a function, collects output values
+    let def = NodeDef {
+        id: "neo/FunctionExit".to_string(),
+        name: "Function Exit".to_string(),
+        category: "Functions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            // Dynamic input pins based on function outputs - using Any for generic case
+        ],
+        description: Some(
+            "Exit point for a function. Output parameters appear as input pins. This node's ID must be '__exit__'.".to_string()
+        ),
+    };
+
+    // FunctionExit ends execution - the executor collects the values
+    registry.register_fn(def, |_ctx| {
+        NodeOutput::end(HashMap::new())
+    });
+
+    // CallFunction - call a function defined in this blueprint
+    let def = NodeDef {
+        id: "neo/CallFunction".to_string(),
+        name: "Call Function".to_string(),
+        category: "Functions".to_string(),
+        pure: false, // Can be pure if the function is pure
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::exec_out("exec"),
+            // Dynamic pins based on function signature
+        ],
+        description: Some(
+            "Call a function defined in this blueprint. Set function name via config.function".to_string()
+        ),
+    };
+
+    // CallFunction execution is handled specially by the executor
+    registry.register_fn(def, |ctx| {
+        let function_name = ctx.get_config_string("function").unwrap_or("").to_string();
+
+        let mut values = HashMap::new();
+        values.insert("_call_function".to_string(), Value::String(function_name));
+
+        // Collect all inputs to pass to the function
+        for (key, value) in &ctx.inputs {
+            if key != "exec" {
+                values.insert(format!("_func_input_{}", key), value.clone());
+            }
+        }
+
+        NodeOutput::continue_default(values)
+    });
+
+    // CallExternal - call a function from an imported blueprint
+    let def = NodeDef {
+        id: "neo/CallExternal".to_string(),
+        name: "Call External".to_string(),
+        category: "Functions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::exec_out("exec"),
+            // Dynamic pins based on function signature
+        ],
+        description: Some(
+            "Call a function from an imported blueprint. Set blueprint ID via config.blueprint and function name via config.function".to_string()
+        ),
+    };
+
+    // CallExternal execution is handled specially by the executor
+    registry.register_fn(def, |ctx| {
+        let blueprint_id = ctx.get_config_string("blueprint").unwrap_or("").to_string();
+        let function_name = ctx.get_config_string("function").unwrap_or("").to_string();
+
+        let mut values = HashMap::new();
+        values.insert("_call_external_blueprint".to_string(), Value::String(blueprint_id));
+        values.insert("_call_external_function".to_string(), Value::String(function_name));
+
+        // Collect all inputs to pass to the function
+        for (key, value) in &ctx.inputs {
+            if key != "exec" {
+                values.insert(format!("_func_input_{}", key), value.clone());
+            }
+        }
+
         NodeOutput::continue_default(values)
     });
 }

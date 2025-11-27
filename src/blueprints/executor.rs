@@ -11,7 +11,8 @@ use tracing::{debug, error, info};
 
 use super::registry::{NodeContext, NodeRegistry};
 use super::types::{
-    Blueprint, BlueprintNode, ExecutionResult, ExecutionTrigger, LatentState, NodeResult,
+    Blueprint, BlueprintNode, ExecutionResult, ExecutionTrigger, FunctionDef, LatentState,
+    NodeResult, FUNCTION_ENTRY_NODE, FUNCTION_EXIT_NODE,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -473,9 +474,364 @@ impl BlueprintExecutor {
             Err(ExecutionError::Failed(err)) => ExecutionResult::Failed { error: err },
         }
     }
+
+    /// Execute a function within a blueprint
+    pub async fn execute_function(
+        &self,
+        blueprint: Arc<Blueprint>,
+        function: &FunctionDef,
+        inputs: HashMap<String, Value>,
+    ) -> Result<HashMap<String, Value>, String> {
+        debug!(
+            blueprint_id = %blueprint.id,
+            function_name = ?function.name,
+            "Executing function"
+        );
+
+        // Create a temporary context for function execution
+        let trigger = ExecutionTrigger::Request {
+            inputs: serde_json::to_value(&inputs).unwrap_or(Value::Null),
+        };
+        let mut ctx = FunctionExecutionContext::new(blueprint, function, trigger);
+
+        // Set up input values on the entry node
+        for (name, value) in &inputs {
+            ctx.set_node_output(FUNCTION_ENTRY_NODE, name, value.clone());
+        }
+
+        // For pure functions, we evaluate data flow only (no exec pins)
+        if function.pure {
+            // Evaluate outputs by tracing data connections from exit node
+            for output in &function.outputs {
+                let value = self
+                    .evaluate_function_input(&mut ctx, function, FUNCTION_EXIT_NODE, &output.name)
+                    .await
+                    .unwrap_or(Value::Null);
+                ctx.set_node_output(FUNCTION_EXIT_NODE, &output.name, value);
+            }
+        } else {
+            // Execute the function's graph starting from entry node
+            if let Err(e) = self
+                .execute_function_from(&mut ctx, function, FUNCTION_ENTRY_NODE, "exec")
+                .await
+            {
+                return Err(format!("Function execution failed: {:?}", e));
+            }
+        }
+
+        // Collect outputs from exit node
+        let mut outputs = HashMap::new();
+        for output in &function.outputs {
+            let value = ctx
+                .get_node_output(FUNCTION_EXIT_NODE, &output.name)
+                .cloned()
+                .unwrap_or(Value::Null);
+            outputs.insert(output.name.clone(), value);
+        }
+
+        Ok(outputs)
+    }
+
+    /// Execute a function's graph starting from a specific node and exec pin
+    fn execute_function_from<'a>(
+        &'a self,
+        ctx: &'a mut FunctionExecutionContext,
+        function: &'a FunctionDef,
+        node_id: &'a str,
+        exec_pin: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ExecutionError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Find connections from this exec pin
+            let target_nodes: Vec<String> = function
+                .connections_from(node_id, exec_pin)
+                .iter()
+                .filter_map(|conn| conn.to_parts().map(|(id, _)| id.to_string()))
+                .collect();
+
+            for to_node_id in target_nodes {
+                self.execute_function_node(ctx, function, &to_node_id)
+                    .await?;
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Execute a single node within a function
+    fn execute_function_node<'a>(
+        &'a self,
+        ctx: &'a mut FunctionExecutionContext,
+        function: &'a FunctionDef,
+        node_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ExecutionError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Skip exit node - it just collects values
+            if node_id == FUNCTION_EXIT_NODE {
+                // Evaluate all inputs to the exit node and store them
+                for output in &function.outputs {
+                    let value = self
+                        .evaluate_function_input(ctx, function, FUNCTION_EXIT_NODE, &output.name)
+                        .await?;
+                    ctx.set_node_output(FUNCTION_EXIT_NODE, &output.name, value);
+                }
+                return Ok(());
+            }
+
+            let node = function
+                .get_node(node_id)
+                .ok_or_else(|| {
+                    ExecutionError::Failed(format!("Node '{}' not found in function", node_id))
+                })?
+                .clone();
+
+            let node_def = self.registry.get_definition(&node.node_type).ok_or_else(|| {
+                ExecutionError::Failed(format!("Unknown node type '{}'", node.node_type))
+            })?;
+
+            debug!(
+                node_id = %node_id,
+                node_type = %node.node_type,
+                "Executing function node"
+            );
+
+            // Gather input values
+            let input_pins: Vec<String> = node_def.data_inputs().map(|p| p.name.clone()).collect();
+            let mut inputs = HashMap::new();
+            for pin_name in input_pins {
+                let value = self
+                    .evaluate_function_input(ctx, function, node_id, &pin_name)
+                    .await?;
+                inputs.insert(pin_name, value);
+            }
+
+            // Create node context
+            let mut node_ctx = NodeContext {
+                node_id: node_id.to_string(),
+                config: node.config.clone(),
+                inputs,
+                variables: ctx.variables.clone(),
+            };
+
+            // Execute the node
+            let executor = self.registry.get_executor(&node.node_type).ok_or_else(|| {
+                ExecutionError::Failed(format!("No executor for node type '{}'", node.node_type))
+            })?;
+
+            let output = executor.execute(&mut node_ctx).await;
+
+            // Update variables
+            ctx.variables = node_ctx.variables;
+
+            // Store output values
+            for (pin_name, value) in output.values {
+                ctx.set_node_output(node_id, &pin_name, value);
+            }
+
+            // Handle the execution result
+            match output.result {
+                NodeResult::Continue(exec_pin) => {
+                    self.execute_function_from(ctx, function, node_id, &exec_pin)
+                        .await?;
+                }
+                NodeResult::End => {}
+                NodeResult::Latent(_) => {
+                    return Err(ExecutionError::Failed(
+                        "Latent nodes not supported in functions".to_string(),
+                    ));
+                }
+                NodeResult::Error(err) => {
+                    return Err(ExecutionError::Failed(err));
+                }
+            }
+
+            Ok(())
+        })
+    }
+
+    /// Evaluate an input value within a function context
+    fn evaluate_function_input<'a>(
+        &'a self,
+        ctx: &'a mut FunctionExecutionContext,
+        function: &'a FunctionDef,
+        node_id: &'a str,
+        pin_name: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value, ExecutionError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            // Find connection to this input pin
+            let connection_source: Option<(String, String)> = function
+                .connections_to(node_id, pin_name)
+                .first()
+                .and_then(|conn| {
+                    conn.from_parts()
+                        .map(|(n, p)| (n.to_string(), p.to_string()))
+                });
+
+            if let Some((from_node_id, from_pin_name)) = connection_source {
+                // Check cache first
+                if let Some(value) = ctx.get_node_output(&from_node_id, &from_pin_name) {
+                    return Ok(value.clone());
+                }
+
+                // Entry node outputs are the function inputs
+                if from_node_id == FUNCTION_ENTRY_NODE {
+                    return Ok(ctx
+                        .get_node_output(FUNCTION_ENTRY_NODE, &from_pin_name)
+                        .cloned()
+                        .unwrap_or(Value::Null));
+                }
+
+                // Need to evaluate the source node
+                let from_node = function.get_node(&from_node_id).ok_or_else(|| {
+                    ExecutionError::Failed(format!("Source node '{}' not found", from_node_id))
+                })?;
+
+                let from_node_def = self
+                    .registry
+                    .get_definition(&from_node.node_type)
+                    .ok_or_else(|| {
+                        ExecutionError::Failed(format!(
+                            "Unknown source node type '{}'",
+                            from_node.node_type
+                        ))
+                    })?;
+
+                if from_node_def.pure {
+                    // Evaluate pure node
+                    self.evaluate_function_pure_node(ctx, function, &from_node_id)
+                        .await?;
+                }
+
+                Ok(ctx
+                    .get_node_output(&from_node_id, &from_pin_name)
+                    .cloned()
+                    .unwrap_or(Value::Null))
+            } else {
+                // No connection - use default
+                if let Some(node) = function.get_node(node_id) {
+                    if let Some(defaults) = node.config.get("defaults") {
+                        if let Some(value) = defaults.get(pin_name) {
+                            return Ok(value.clone());
+                        }
+                    }
+
+                    if let Some(node_def) = self.registry.get_definition(&node.node_type) {
+                        if let Some(pin_def) = node_def.get_pin(pin_name) {
+                            if let Some(default) = &pin_def.default {
+                                return Ok(default.clone());
+                            }
+                        }
+                    }
+                }
+
+                Ok(Value::Null)
+            }
+        })
+    }
+
+    /// Evaluate a pure node within a function context
+    fn evaluate_function_pure_node<'a>(
+        &'a self,
+        ctx: &'a mut FunctionExecutionContext,
+        function: &'a FunctionDef,
+        node_id: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), ExecutionError>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let node = function
+                .get_node(node_id)
+                .ok_or_else(|| ExecutionError::Failed(format!("Node '{}' not found", node_id)))?
+                .clone();
+
+            let node_def = self.registry.get_definition(&node.node_type).ok_or_else(|| {
+                ExecutionError::Failed(format!("Unknown node type '{}'", node.node_type))
+            })?;
+
+            // Gather inputs
+            let input_pins: Vec<String> = node_def.data_inputs().map(|p| p.name.clone()).collect();
+            let mut inputs = HashMap::new();
+            for pin_name in input_pins {
+                let value = self
+                    .evaluate_function_input(ctx, function, node_id, &pin_name)
+                    .await?;
+                inputs.insert(pin_name, value);
+            }
+
+            // Execute
+            let mut node_ctx = NodeContext {
+                node_id: node_id.to_string(),
+                config: node.config.clone(),
+                inputs,
+                variables: ctx.variables.clone(),
+            };
+
+            let executor = self.registry.get_executor(&node.node_type).ok_or_else(|| {
+                ExecutionError::Failed(format!("No executor for node type '{}'", node.node_type))
+            })?;
+
+            let output = executor.execute(&mut node_ctx).await;
+
+            // Store outputs
+            for (pin_name, value) in output.values {
+                ctx.set_node_output(node_id, &pin_name, value);
+            }
+
+            if let NodeResult::Error(err) = output.result {
+                return Err(ExecutionError::Failed(err));
+            }
+
+            Ok(())
+        })
+    }
+}
+
+/// Execution context for function calls
+struct FunctionExecutionContext {
+    /// The blueprint containing the function
+    #[allow(dead_code)]
+    blueprint: Arc<Blueprint>,
+    /// Current variable values
+    variables: HashMap<String, Value>,
+    /// Cached output values from executed nodes
+    node_outputs: HashMap<String, Value>,
+    /// What triggered this execution
+    #[allow(dead_code)]
+    trigger: ExecutionTrigger,
+}
+
+impl FunctionExecutionContext {
+    fn new(blueprint: Arc<Blueprint>, function: &FunctionDef, trigger: ExecutionTrigger) -> Self {
+        // Initialize variables with defaults from the function's inputs
+        let mut variables = HashMap::new();
+        for input in &function.inputs {
+            if let Some(default) = &input.default {
+                variables.insert(input.name.clone(), default.clone());
+            }
+        }
+
+        Self {
+            blueprint,
+            variables,
+            node_outputs: HashMap::new(),
+            trigger,
+        }
+    }
+
+    fn get_node_output(&self, node_id: &str, pin_name: &str) -> Option<&Value> {
+        let key = format!("{}.{}", node_id, pin_name);
+        self.node_outputs.get(&key)
+    }
+
+    fn set_node_output(&mut self, node_id: &str, pin_name: &str, value: Value) {
+        let key = format!("{}.{}", node_id, pin_name);
+        self.node_outputs.insert(key, value);
+    }
 }
 
 /// Internal execution error type
+#[derive(Debug)]
 enum ExecutionError {
     Suspended(LatentState),
     Failed(String),
@@ -496,6 +852,7 @@ mod tests {
             name: "Test Blueprint".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            service: None,
             variables: {
                 let mut vars = HashMap::new();
                 vars.insert(
@@ -547,6 +904,10 @@ mod tests {
                 Connection::new("branch", "true", "log_true", "exec"),
                 Connection::new("branch", "false", "log_false", "exec"),
             ],
+            functions: HashMap::new(),
+            imports: vec![],
+            exports: vec![],
+            implements: vec![],
         }
     }
 
@@ -600,6 +961,7 @@ mod tests {
             name: "Math Test".to_string(),
             version: "1.0.0".to_string(),
             description: None,
+            service: None,
             variables: HashMap::new(),
             nodes: vec![
                 BlueprintNode {
@@ -632,6 +994,10 @@ mod tests {
                 Connection::new("add", "result", "multiply", "a"),
                 // Note: multiply.result would be 16.0, but we don't use it
             ],
+            functions: HashMap::new(),
+            imports: vec![],
+            exports: vec![],
+            implements: vec![],
         };
 
         let blueprint = Arc::new(blueprint);
@@ -651,6 +1017,207 @@ mod tests {
                 panic!("Execution failed: {}", error);
             }
             _ => panic!("Unexpected result"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_pure_function_execution() {
+        use crate::blueprints::types::{FunctionDef, FunctionParam, FUNCTION_ENTRY_NODE, FUNCTION_EXIT_NODE};
+
+        let registry = Arc::new(NodeRegistry::with_builtins());
+        let executor = BlueprintExecutor::new(registry);
+
+        // Create a pure function that adds two numbers: add(a, b) -> result
+        let add_function = FunctionDef {
+            name: Some("add".to_string()),
+            description: Some("Add two numbers".to_string()),
+            inputs: vec![
+                FunctionParam {
+                    name: "a".to_string(),
+                    param_type: PinType::Real,
+                    default: None,
+                    description: None,
+                },
+                FunctionParam {
+                    name: "b".to_string(),
+                    param_type: PinType::Real,
+                    default: None,
+                    description: None,
+                },
+            ],
+            outputs: vec![FunctionParam {
+                name: "result".to_string(),
+                param_type: PinType::Real,
+                default: None,
+                description: None,
+            }],
+            pure: true,
+            nodes: vec![
+                BlueprintNode {
+                    id: FUNCTION_ENTRY_NODE.to_string(),
+                    node_type: "neo/FunctionEntry".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+                BlueprintNode {
+                    id: "add_node".to_string(),
+                    node_type: "neo/Add".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+                BlueprintNode {
+                    id: FUNCTION_EXIT_NODE.to_string(),
+                    node_type: "neo/FunctionExit".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+            ],
+            connections: vec![
+                // Entry outputs -> Add inputs
+                Connection::new(FUNCTION_ENTRY_NODE, "a", "add_node", "a"),
+                Connection::new(FUNCTION_ENTRY_NODE, "b", "add_node", "b"),
+                // Add output -> Exit input
+                Connection::new("add_node", "result", FUNCTION_EXIT_NODE, "result"),
+            ],
+        };
+
+        // Create a blueprint with this function
+        let mut blueprint = Blueprint {
+            id: "function-test".to_string(),
+            name: "Function Test".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            service: None,
+            variables: HashMap::new(),
+            nodes: vec![],
+            connections: vec![],
+            functions: HashMap::new(),
+            imports: vec![],
+            exports: vec!["add".to_string()],
+            implements: vec![],
+        };
+        blueprint.functions.insert("add".to_string(), add_function.clone());
+
+        let blueprint = Arc::new(blueprint);
+
+        // Execute the function directly with inputs: a=5, b=3
+        let mut inputs = HashMap::new();
+        inputs.insert("a".to_string(), serde_json::json!(5.0));
+        inputs.insert("b".to_string(), serde_json::json!(3.0));
+
+        let result = executor
+            .execute_function(Arc::clone(&blueprint), &add_function, inputs)
+            .await;
+
+        match result {
+            Ok(outputs) => {
+                let result_value = outputs.get("result").expect("Should have result output");
+                assert_eq!(result_value.as_f64(), Some(8.0), "5 + 3 should equal 8");
+                println!("Function executed successfully: 5 + 3 = {}", result_value);
+            }
+            Err(e) => {
+                panic!("Function execution failed: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_function_with_call() {
+        use crate::blueprints::types::{FunctionDef, FunctionParam, FUNCTION_ENTRY_NODE, FUNCTION_EXIT_NODE};
+
+        let registry = Arc::new(NodeRegistry::with_builtins());
+        let executor = BlueprintExecutor::new(registry);
+
+        // Create a function that calculates error: error(current, setpoint) -> diff
+        let error_function = FunctionDef {
+            name: Some("calculate_error".to_string()),
+            description: Some("Calculate the difference between current and setpoint".to_string()),
+            inputs: vec![
+                FunctionParam {
+                    name: "current".to_string(),
+                    param_type: PinType::Real,
+                    default: None,
+                    description: None,
+                },
+                FunctionParam {
+                    name: "setpoint".to_string(),
+                    param_type: PinType::Real,
+                    default: None,
+                    description: None,
+                },
+            ],
+            outputs: vec![FunctionParam {
+                name: "error".to_string(),
+                param_type: PinType::Real,
+                default: None,
+                description: None,
+            }],
+            pure: true,
+            nodes: vec![
+                BlueprintNode {
+                    id: FUNCTION_ENTRY_NODE.to_string(),
+                    node_type: "neo/FunctionEntry".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+                BlueprintNode {
+                    id: "subtract".to_string(),
+                    node_type: "neo/Subtract".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+                BlueprintNode {
+                    id: FUNCTION_EXIT_NODE.to_string(),
+                    node_type: "neo/FunctionExit".to_string(),
+                    position: Default::default(),
+                    config: Value::Null,
+                },
+            ],
+            connections: vec![
+                Connection::new(FUNCTION_ENTRY_NODE, "current", "subtract", "a"),
+                Connection::new(FUNCTION_ENTRY_NODE, "setpoint", "subtract", "b"),
+                Connection::new("subtract", "result", FUNCTION_EXIT_NODE, "error"),
+            ],
+        };
+
+        // Create blueprint with the function
+        let mut blueprint = Blueprint {
+            id: "error-calc-test".to_string(),
+            name: "Error Calculation Test".to_string(),
+            version: "1.0.0".to_string(),
+            description: None,
+            service: None,
+            variables: HashMap::new(),
+            nodes: vec![],
+            connections: vec![],
+            functions: HashMap::new(),
+            imports: vec![],
+            exports: vec!["calculate_error".to_string()],
+            implements: vec![],
+        };
+        blueprint.functions.insert("calculate_error".to_string(), error_function.clone());
+
+        let blueprint = Arc::new(blueprint);
+
+        // Test: current=75.5, setpoint=72.0 -> error=3.5
+        let mut inputs = HashMap::new();
+        inputs.insert("current".to_string(), serde_json::json!(75.5));
+        inputs.insert("setpoint".to_string(), serde_json::json!(72.0));
+
+        let result = executor
+            .execute_function(Arc::clone(&blueprint), &error_function, inputs)
+            .await;
+
+        match result {
+            Ok(outputs) => {
+                let error_value = outputs.get("error").expect("Should have error output");
+                let error = error_value.as_f64().expect("Should be a number");
+                assert!((error - 3.5).abs() < 0.001, "75.5 - 72.0 should equal 3.5, got {}", error);
+                println!("Error calculation: 75.5 - 72.0 = {}", error);
+            }
+            Err(e) => {
+                panic!("Function execution failed: {}", e);
+            }
         }
     }
 }

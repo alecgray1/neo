@@ -113,6 +113,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         // In a real system, you'd wait for the point to change
                         tokio::time::sleep(Duration::from_millis(100)).await;
                     }
+                    WakeCondition::Interval { interval_ms, .. } => {
+                        println!("  (Would run on interval: {}ms)", interval_ms);
+                        println!("  Simulating interval tick...\n");
+                        tokio::time::sleep(Duration::from_millis((*interval_ms).min(1000))).await;
+                    }
                 }
 
                 // Resume execution
