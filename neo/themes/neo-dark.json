@@ -23,10 +23,10 @@
     "menu.separatorBackground": "#454545",
     "menu.border": "#454545",
 
-    "commandCenter.background": "#3c3c3c",
+    "commandCenter.background": "#252526",
     "commandCenter.foreground": "#cccccc",
     "commandCenter.border": "#454545",
-    "commandCenter.activeBackground": "#505050",
+    "commandCenter.activeBackground": "#3c3c3c",
     "commandCenter.activeForeground": "#ffffff",
     "commandCenter.activeBorder": "#007acc",
 
