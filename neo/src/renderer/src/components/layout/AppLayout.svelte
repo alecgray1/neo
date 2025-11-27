@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { PaneGroup, Pane, PaneResizer } from 'paneforge'
   import { onMount } from 'svelte'
+  import { PaneGroup, Pane, type PaneAPI } from 'paneforge'
   import { layoutStore, type LayoutState } from '$lib/stores/layout.svelte'
   import * as Tooltip from '$lib/components/ui/tooltip'
 
@@ -11,6 +11,21 @@
   import Panel from './Panel.svelte'
   import AuxiliaryBar from './AuxiliaryBar.svelte'
   import StatusBar from './StatusBar.svelte'
+  import Resizer from './Resizer.svelte'
+
+  // Pane API refs for programmatic control
+  let primarySidebarPane: PaneAPI | undefined = $state()
+  let auxiliaryBarPane: PaneAPI | undefined = $state()
+  let panelPane: PaneAPI | undefined = $state()
+
+  // Expose pane APIs globally for toggle commands
+  $effect(() => {
+    layoutStore.setPaneAPIs({
+      primarySidebar: primarySidebarPane,
+      auxiliaryBar: auxiliaryBarPane,
+      panel: panelPane
+    })
+  })
 
   // Layout persistence
   let initialized = $state(false)
@@ -25,6 +40,20 @@
       console.error('Failed to load layout:', error)
     }
     initialized = true
+
+    // Sync initial collapsed state from store to paneforge
+    // (paneforge starts expanded by default, but our store may say collapsed)
+    requestAnimationFrame(() => {
+      if (!layoutStore.state.primarySidebarVisible && primarySidebarPane) {
+        primarySidebarPane.collapse()
+      }
+      if (!layoutStore.state.auxiliaryBarVisible && auxiliaryBarPane) {
+        auxiliaryBarPane.collapse()
+      }
+      if (!layoutStore.state.panelVisible && panelPane) {
+        panelPane.collapse()
+      }
+    })
   })
 
   // Debounced save
@@ -46,26 +75,35 @@
 
   $effect(() => {
     if (initialized) {
-      // Track all state changes
       const _ = layoutStore.state
       saveLayout()
     }
   })
 
-  // Derived state for layout structure
+  // Sync paneforge collapse/expand events to our store
+  function onPrimarySidebarCollapse() {
+    layoutStore.state.primarySidebarVisible = false
+  }
+  function onPrimarySidebarExpand() {
+    layoutStore.state.primarySidebarVisible = true
+  }
+  function onAuxiliaryBarCollapse() {
+    layoutStore.state.auxiliaryBarVisible = false
+  }
+  function onAuxiliaryBarExpand() {
+    layoutStore.state.auxiliaryBarVisible = true
+  }
+  function onPanelCollapse() {
+    layoutStore.state.panelVisible = false
+  }
+  function onPanelExpand() {
+    layoutStore.state.panelVisible = true
+  }
+
+  // Derived state for layout
   let isPanelHorizontal = $derived(
     layoutStore.state.panelPosition === 'left' || layoutStore.state.panelPosition === 'right'
   )
-  // Include all visibility states in the key to force complete re-render when any changes
-  let layoutKey = $derived(
-    `layout-${layoutStore.state.panelPosition}-ps${layoutStore.state.primarySidebarVisible}-aux${layoutStore.state.auxiliaryBarVisible}-panel${layoutStore.state.panelVisible}`
-  )
-
-  // Resizer classes
-  const hResizerClass =
-    'w-1 bg-transparent hover:bg-[var(--neo-focusBorder)] active:bg-[var(--neo-focusBorder)] transition-colors cursor-col-resize'
-  const vResizerClass =
-    'h-1 bg-transparent hover:bg-[var(--neo-focusBorder)] active:bg-[var(--neo-focusBorder)] transition-colors cursor-row-resize'
 </script>
 
 <Tooltip.Provider>
@@ -81,95 +119,118 @@
     <!-- Activity Bar (fixed width) -->
     <ActivityBar />
 
-    <!-- Resizable Panes -->
-    {#key layoutKey}
-      {#if isPanelHorizontal}
-        <!-- Panel is left or right: flat horizontal layout -->
-        <PaneGroup direction="horizontal" autoSaveId={layoutKey} class="flex-1">
-          <!-- Panel on left -->
-          {#if layoutStore.state.panelPosition === 'left' && layoutStore.state.panelVisible}
-            <Pane defaultSize={20} minSize={10} collapsible>
-              <Panel />
-            </Pane>
-            <PaneResizer class={hResizerClass} />
-          {/if}
-
-          <!-- Primary Sidebar -->
-          {#if layoutStore.state.primarySidebarVisible}
-            <Pane defaultSize={17} minSize={10} collapsible>
-              <PrimarySidebar />
-            </Pane>
-            <PaneResizer class={hResizerClass} />
-          {/if}
-
-          <!-- Editor Area -->
-          <Pane defaultSize={50} minSize={20}>
-            <EditorArea />
-          </Pane>
-
-          <!-- Auxiliary Bar -->
-          {#if layoutStore.state.auxiliaryBarVisible}
-            <PaneResizer class={hResizerClass} />
-            <Pane defaultSize={17} minSize={10} collapsible>
-              <AuxiliaryBar />
-            </Pane>
-          {/if}
-
-          <!-- Panel on right -->
-          {#if layoutStore.state.panelPosition === 'right' && layoutStore.state.panelVisible}
-            <PaneResizer class={hResizerClass} />
-            <Pane defaultSize={20} minSize={10} collapsible>
-              <Panel />
-            </Pane>
-          {/if}
-        </PaneGroup>
-      {:else}
-        <!-- Panel is top or bottom: nested vertical layout -->
-        <PaneGroup direction="horizontal" autoSaveId={layoutKey} class="flex-1">
-          <!-- Primary Sidebar -->
-          {#if layoutStore.state.primarySidebarVisible}
-            <Pane defaultSize={17} minSize={10} collapsible>
-              <PrimarySidebar />
-            </Pane>
-            <PaneResizer class={hResizerClass} />
-          {/if}
-
-          <!-- Editor + Panel vertical stack -->
-          <Pane defaultSize={66} minSize={20}>
-            <PaneGroup direction="vertical" autoSaveId="{layoutKey}-vertical">
-              <!-- Panel on top -->
-              {#if layoutStore.state.panelPosition === 'top' && layoutStore.state.panelVisible}
-                <Pane defaultSize={30} minSize={10} collapsible>
-                  <Panel />
-                </Pane>
-                <PaneResizer class={vResizerClass} />
-              {/if}
-
-              <!-- Editor Area -->
-              <Pane defaultSize={70}>
-                <EditorArea />
-              </Pane>
-
-              <!-- Panel on bottom -->
-              {#if layoutStore.state.panelPosition === 'bottom' && layoutStore.state.panelVisible}
-                <PaneResizer class={vResizerClass} />
-                <Pane defaultSize={30} minSize={10} collapsible>
-                  <Panel />
-                </Pane>
-              {/if}
-            </PaneGroup>
-          </Pane>
-
-          <!-- Auxiliary Bar -->
-          {#if layoutStore.state.auxiliaryBarVisible}
-            <PaneResizer class={hResizerClass} />
-            <Pane defaultSize={17} minSize={10} collapsible>
-              <AuxiliaryBar />
-            </Pane>
-          {/if}
-        </PaneGroup>
+    <!-- Main horizontal layout with paneforge -->
+    <PaneGroup direction="horizontal" class="flex-1">
+      <!-- Panel on left (if horizontal position) -->
+      {#if isPanelHorizontal && layoutStore.state.panelPosition === 'left'}
+        <Pane
+          bind:this={panelPane}
+          defaultSize={20}
+          minSize={10}
+          collapsible
+          collapsedSize={0}
+          onCollapse={onPanelCollapse}
+          onExpand={onPanelExpand}
+        >
+          <Panel />
+        </Pane>
+        <Resizer />
       {/if}
-    {/key}
+
+      <!-- Primary Sidebar -->
+      <Pane
+        bind:this={primarySidebarPane}
+        defaultSize={20}
+        minSize={10}
+        collapsible
+        collapsedSize={0}
+        order={1}
+        onCollapse={onPrimarySidebarCollapse}
+        onExpand={onPrimarySidebarExpand}
+      >
+        <PrimarySidebar />
+      </Pane>
+      <Resizer />
+
+      <!-- Center: Editor + Panel (vertical) -->
+      <Pane defaultSize={60} minSize={30} order={2}>
+        {#if isPanelHorizontal}
+          <!-- No vertical panel, just editor -->
+          <EditorArea />
+        {:else}
+          <!-- Vertical panel layout -->
+          <PaneGroup direction="vertical">
+            <!-- Panel on top -->
+            {#if layoutStore.state.panelPosition === 'top'}
+              <Pane
+                bind:this={panelPane}
+                defaultSize={30}
+                minSize={10}
+                collapsible
+                collapsedSize={0}
+                onCollapse={onPanelCollapse}
+                onExpand={onPanelExpand}
+              >
+                <Panel />
+              </Pane>
+              <Resizer />
+            {/if}
+
+            <!-- Editor Area -->
+            <Pane defaultSize={70} minSize={30}>
+              <EditorArea />
+            </Pane>
+
+            <!-- Panel on bottom -->
+            {#if layoutStore.state.panelPosition === 'bottom'}
+              <Resizer />
+              <Pane
+                bind:this={panelPane}
+                defaultSize={30}
+                minSize={10}
+                collapsible
+                collapsedSize={0}
+                onCollapse={onPanelCollapse}
+                onExpand={onPanelExpand}
+              >
+                <Panel />
+              </Pane>
+            {/if}
+          </PaneGroup>
+        {/if}
+      </Pane>
+
+      <!-- Auxiliary Bar -->
+      <Resizer />
+      <Pane
+        bind:this={auxiliaryBarPane}
+        defaultSize={20}
+        minSize={10}
+        collapsible
+        collapsedSize={0}
+        order={3}
+        onCollapse={onAuxiliaryBarCollapse}
+        onExpand={onAuxiliaryBarExpand}
+      >
+        <AuxiliaryBar />
+      </Pane>
+
+      <!-- Panel on right (if horizontal position) -->
+      {#if isPanelHorizontal && layoutStore.state.panelPosition === 'right'}
+        <Resizer />
+        <Pane
+          bind:this={panelPane}
+          defaultSize={20}
+          minSize={10}
+          collapsible
+          collapsedSize={0}
+          onCollapse={onPanelCollapse}
+          onExpand={onPanelExpand}
+        >
+          <Panel />
+        </Pane>
+      {/if}
+    </PaneGroup>
   </div>
 
   <!-- Status Bar -->
