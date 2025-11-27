@@ -315,6 +315,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "blueprint_macros"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "blueprint_runtime"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blueprint_macros",
+ "blueprint_types",
+ "rand",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
+name = "blueprint_server"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "blueprint_runtime",
+ "blueprint_types",
+ "kameo",
+ "notify",
+ "parking_lot",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "blueprint_types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde-wasm-bindgen",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1426,6 +1474,10 @@ dependencies = [
  "async-trait",
  "axum",
  "bacnet",
+ "blueprint_macros",
+ "blueprint_runtime",
+ "blueprint_server",
+ "blueprint_types",
  "bytes",
  "chrono",
  "config",
@@ -1972,6 +2024,17 @@ checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
  "serde_derive",
+]
+
+[[package]]
+name = "serde-wasm-bindgen"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8302e169f0eddcc139c70f139d19d6467353af16f9fce27e8c30158036a1e16b"
+dependencies = [
+ "js-sys",
+ "serde",
+ "wasm-bindgen",
 ]
 
 [[package]]

@@ -1,48 +1,50 @@
-[package]
-name = "neo"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = [
+    "crates/neo",
+    "crates/blueprint_types",
+    "crates/blueprint_macros",
+    "crates/blueprint_runtime",
+    "crates/blueprint_server",
+]
+default-members = ["crates/neo"]
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+blueprint_types = { path = "crates/blueprint_types" }
+blueprint_macros = { path = "crates/blueprint_macros" }
+blueprint_runtime = { path = "crates/blueprint_runtime" }
+blueprint_server = { path = "crates/blueprint_server" }
+
 # Actor system
 kameo = "0.19.1"
 kameo_actors = "0.4.0"
 tokio = { version = "1.40", features = ["full"] }
 
-# BACnet protocol
-bacnet = { git = "https://github.com/Green-Mod/bacnet-stack-rs", package = "bacnet" }
-
 # Async utilities
 futures = "0.3"
 async-trait = "0.1"
-
-# Protocols
-tokio-modbus = "0.14"
-bytes = "1.7"
-
-# Web API & WebSocket
-axum = { version = "0.7", features = ["ws"] }
-tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "trace"] }
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 toml = "0.8"
 
-# Database
-redb = "2.1"
+# Proc macros
+proc-macro2 = "1.0"
+quote = "1.0"
+syn = { version = "2.0", features = ["full"] }
 
-# Configuration
-config = "0.14"
-figment = { version = "0.10", features = ["toml", "env"] }
+# WASM
+wasm-bindgen = "0.2"
 
 # Logging & Tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
-
-# Time
-chrono = { version = "0.4", features = ["serde"] }
 
 # Utilities
 thiserror = "1.0"
@@ -53,14 +55,9 @@ uuid = { version = "1.10", features = ["v4", "serde"] }
 wildmatch = "2.3"
 rand = "0.8"
 parking_lot = "0.12"
+chrono = { version = "0.4", features = ["serde"] }
 
-# TypeScript type generation
-ts-rs = { version = "10", features = ["chrono-impl", "uuid-impl", "serde-json-impl"] }
-
-# Deno runtime for JS/TS plugins
-deno_core = "0.311"
-
-[dev-dependencies]
+# Testing
 tokio-test = "0.4"
 tempfile = "3.14"
 
