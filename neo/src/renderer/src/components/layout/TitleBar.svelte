@@ -14,7 +14,7 @@
 </script>
 
 <div
-  class="titlebar h-[35px] flex items-center select-none shrink-0"
+  class="titlebar h-9 flex items-stretch select-none shrink-0"
   style="
     background: var(--neo-titleBar-activeBackground);
     color: var(--neo-titleBar-activeForeground);
@@ -43,7 +43,7 @@
 
   <!-- Right: Toggle Actions + Window Controls -->
   <div
-    class="titlebar-right flex items-center justify-end"
+    class="titlebar-right flex items-stretch justify-end"
     style="flex: 2 2 20%;"
   >
     <TitleBarActions />

@@ -24,10 +24,10 @@
   }
 </script>
 
-<div class="window-controls flex h-full" style="-webkit-app-region: no-drag;">
+<div class="window-controls flex items-stretch" style="-webkit-app-region: no-drag;">
   <!-- Minimize -->
   <button
-    class="window-control w-[46px] h-full flex items-center justify-center hover:bg-white/10 transition-colors"
+    class="window-control w-[46px] flex items-center justify-center hover:bg-white/10 transition-colors"
     onclick={minimize}
     aria-label="Minimize"
   >
@@ -36,7 +36,7 @@
 
   <!-- Maximize/Restore -->
   <button
-    class="window-control w-[46px] h-full flex items-center justify-center hover:bg-white/10 transition-colors"
+    class="window-control w-[46px] flex items-center justify-center hover:bg-white/10 transition-colors"
     onclick={maximize}
     aria-label={isMaximized ? 'Restore' : 'Maximize'}
   >
@@ -49,7 +49,7 @@
 
   <!-- Close -->
   <button
-    class="window-control window-close w-[46px] h-full flex items-center justify-center hover:bg-red-600 transition-colors"
+    class="window-control window-close w-[46px] flex items-center justify-center hover:bg-red-600 transition-colors"
     onclick={close}
     aria-label="Close"
   >
