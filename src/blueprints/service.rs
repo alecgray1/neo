@@ -11,16 +11,23 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use kameo::actor::ActorRef;
+use kameo::actor::{ActorRef, Spawn};
 use kameo::message::{Context, Message};
+use kameo_actors::pubsub::Publish;
 use notify::{Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+use crate::actors::PubSubBroker;
+use crate::messages::Event;
+use crate::services::actor::{ServiceActorRef, ServiceMetadata, ServiceType};
+use crate::services::registry::{RegistryMsg, RegistryReply, ServiceRegistry};
+
 use super::executor::{BlueprintExecutor, ExecutionContext};
 use super::registry::NodeRegistry;
+use super::service_adapter::BlueprintServiceAdapter;
 use super::types::{Blueprint, ExecutionResult, ExecutionTrigger, LatentState, WakeCondition};
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -92,6 +99,23 @@ pub enum FileChangeKind {
 #[derive(Debug)]
 pub struct TickLatent;
 
+/// Register all blueprints with service.enabled as services
+#[derive(Debug)]
+pub struct RegisterServiceBlueprints;
+
+/// Handle an event from PubSub (for blueprints to react to system events)
+#[derive(Debug, Clone)]
+pub struct HandleEvent {
+    pub event: Event,
+}
+
+/// Set the PubSub and ServiceRegistry references
+#[derive(Debug)]
+pub struct SetServiceRefs {
+    pub pubsub: ActorRef<PubSubBroker>,
+    pub service_registry: ActorRef<ServiceRegistry>,
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Response Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -145,6 +169,12 @@ pub struct BlueprintService {
     watcher: Option<RecommendedWatcher>,
     /// Channel receiver for file events
     file_event_rx: Option<mpsc::UnboundedReceiver<FileChanged>>,
+    /// PubSub broker for event publishing (optional)
+    pubsub: Option<ActorRef<PubSubBroker>>,
+    /// Service registry for blueprint-as-service registration (optional)
+    service_registry: Option<ActorRef<ServiceRegistry>>,
+    /// Registered blueprint service adapters (blueprint_id -> adapter actor)
+    service_adapters: HashMap<String, ActorRef<BlueprintServiceAdapter>>,
 }
 
 struct SuspendedExecution {
@@ -168,6 +198,40 @@ impl BlueprintService {
             blueprints_dir: blueprints_dir.as_ref().to_path_buf(),
             watcher: None,
             file_event_rx: None,
+            pubsub: None,
+            service_registry: None,
+            service_adapters: HashMap::new(),
+        }
+    }
+
+    /// Create a new BlueprintService with PubSub and ServiceRegistry
+    pub fn with_services(
+        blueprints_dir: impl AsRef<Path>,
+        pubsub: ActorRef<PubSubBroker>,
+        service_registry: ActorRef<ServiceRegistry>,
+    ) -> Self {
+        let mut service = Self::new(blueprints_dir);
+        service.pubsub = Some(pubsub);
+        service.service_registry = Some(service_registry);
+        service
+    }
+
+    /// Set the PubSub broker
+    pub fn set_pubsub(&mut self, pubsub: ActorRef<PubSubBroker>) {
+        self.pubsub = Some(pubsub);
+    }
+
+    /// Set the ServiceRegistry
+    pub fn set_service_registry(&mut self, registry: ActorRef<ServiceRegistry>) {
+        self.service_registry = Some(registry);
+    }
+
+    /// Publish an event to PubSub
+    pub async fn publish_event(&self, event: Event) {
+        if let Some(pubsub) = &self.pubsub {
+            if let Err(e) = pubsub.tell(Publish(event)).await {
+                warn!("Failed to publish event: {}", e);
+            }
         }
     }
 
@@ -388,25 +452,35 @@ impl BlueprintService {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
 
-        // Find executions ready to resume
-        let ready: Vec<String> = self
+        // Find one-shot delays ready to resume
+        let ready_delays: Vec<String> = self
             .suspended
             .iter()
             .filter(|(_, exec)| match &exec.state.wake_condition {
                 WakeCondition::Delay { until_ms } => now_ms >= *until_ms,
-                // Events and point changes are handled via TriggerEvent
                 _ => false,
             })
             .map(|(id, _)| id.clone())
             .collect();
 
-        // Resume ready executions
-        for id in ready {
+        // Find interval timers ready to tick
+        let ready_intervals: Vec<String> = self
+            .suspended
+            .iter()
+            .filter(|(_, exec)| match &exec.state.wake_condition {
+                WakeCondition::Interval { next_tick_ms, .. } => now_ms >= *next_tick_ms,
+                _ => false,
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+
+        // Resume one-shot delays (remove from suspended)
+        for id in ready_delays {
             if let Some(mut exec) = self.suspended.remove(&id) {
                 debug!(
                     blueprint_id = %exec.blueprint_id,
                     node_id = %exec.state.node_id,
-                    "Resuming latent execution"
+                    "Resuming delay execution"
                 );
 
                 let result = self.executor.resume(&mut exec.context, &exec.state).await;
@@ -436,6 +510,69 @@ impl BlueprintService {
                         );
                     }
                 }
+            }
+        }
+
+        // Handle interval timers (keep in suspended, update next_tick)
+        for id in ready_intervals {
+            if let Some(mut exec) = self.suspended.remove(&id) {
+                // Extract interval info before execution
+                let (interval_ms, timer_id, tick_count) = match &exec.state.wake_condition {
+                    WakeCondition::Interval { interval_ms, timer_id, tick_count, .. } => {
+                        (*interval_ms, timer_id.clone(), *tick_count)
+                    }
+                    _ => continue,
+                };
+
+                debug!(
+                    blueprint_id = %exec.blueprint_id,
+                    node_id = %exec.state.node_id,
+                    tick_count = tick_count,
+                    "Timer tick"
+                );
+
+                // Set tick_count in context for the execution
+                exec.context.set_node_output(
+                    &exec.state.node_id,
+                    "tick_count",
+                    serde_json::Value::from(tick_count as i64),
+                );
+
+                // Execute the tick
+                let result = self.executor.resume(&mut exec.context, &exec.state).await;
+
+                // Schedule next tick regardless of result (timer keeps running)
+                let next_tick_ms = now_ms + interval_ms;
+                let new_tick_count = tick_count + 1;
+
+                // Update state for next tick
+                exec.state.wake_condition = WakeCondition::Interval {
+                    interval_ms,
+                    next_tick_ms,
+                    timer_id: timer_id.clone(),
+                    tick_count: new_tick_count,
+                };
+
+                // Handle execution result
+                match result {
+                    ExecutionResult::Completed { .. } => {
+                        debug!(blueprint_id = %exec.blueprint_id, "Timer tick completed");
+                    }
+                    ExecutionResult::Suspended { state: _ } => {
+                        // Timer tick produced another suspension - this is unusual but handle it
+                        debug!(blueprint_id = %exec.blueprint_id, "Timer tick suspended (unusual)");
+                    }
+                    ExecutionResult::Failed { error } => {
+                        error!(
+                            blueprint_id = %exec.blueprint_id,
+                            error = %error,
+                            "Timer tick failed"
+                        );
+                    }
+                }
+
+                // Re-insert for next tick
+                self.suspended.insert(id, exec);
             }
         }
     }
@@ -710,6 +847,203 @@ impl Message<TickLatent> for BlueprintService {
         _ctx: &mut Context<Self, Self::Reply>,
     ) -> Self::Reply {
         self.tick_latent().await;
+    }
+}
+
+impl Message<SetServiceRefs> for BlueprintService {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: SetServiceRefs,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        self.pubsub = Some(msg.pubsub);
+        self.service_registry = Some(msg.service_registry);
+        info!("BlueprintService connected to PubSub and ServiceRegistry");
+    }
+}
+
+impl Message<RegisterServiceBlueprints> for BlueprintService {
+    type Reply = usize;
+
+    async fn handle(
+        &mut self,
+        _msg: RegisterServiceBlueprints,
+        ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        let Some(registry) = &self.service_registry else {
+            warn!("Cannot register blueprint services: ServiceRegistry not set");
+            return 0;
+        };
+
+        let registry = registry.clone();
+        let self_ref = ctx.actor_ref().clone();
+        let mut registered = 0;
+
+        // Find all blueprints with service.enabled = true
+        let service_blueprints: Vec<Arc<Blueprint>> = self
+            .blueprints
+            .values()
+            .filter(|bp| bp.is_service())
+            .cloned()
+            .collect();
+
+        for blueprint in service_blueprints {
+            let blueprint_id = blueprint.id.clone();
+
+            // Skip if already registered
+            if self.service_adapters.contains_key(&blueprint_id) {
+                continue;
+            }
+
+            // Create the adapter actor
+            let adapter = BlueprintServiceAdapter::new(
+                Arc::clone(&blueprint),
+                self_ref.clone(),
+            );
+            let adapter_ref = BlueprintServiceAdapter::spawn(adapter);
+
+            // Create ServiceActorRef
+            let service_ref = ServiceActorRef::new(
+                adapter_ref.clone(),
+                ServiceMetadata {
+                    id: format!("blueprint:{}", blueprint_id),
+                    name: blueprint.name.clone(),
+                    description: blueprint
+                        .service
+                        .as_ref()
+                        .and_then(|s| s.description.clone())
+                        .unwrap_or_else(|| blueprint.description.clone().unwrap_or_default()),
+                    service_type: ServiceType::Native,
+                },
+            );
+
+            // Register with ServiceRegistry
+            let subscriptions = blueprint.service_subscriptions();
+            match registry
+                .ask(RegistryMsg::Register {
+                    actor_ref: service_ref,
+                    subscriptions: subscriptions.clone(),
+                })
+                .await
+            {
+                Ok(RegistryReply::Registered) => {
+                    info!(
+                        blueprint_id = %blueprint_id,
+                        subscriptions = ?subscriptions,
+                        "Registered blueprint as service"
+                    );
+                    self.service_adapters.insert(blueprint_id, adapter_ref);
+                    registered += 1;
+                }
+                Ok(RegistryReply::Failed(e)) => {
+                    error!(
+                        blueprint_id = %blueprint_id,
+                        error = %e,
+                        "Failed to register blueprint as service"
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        blueprint_id = %blueprint_id,
+                        error = %e,
+                        "Failed to communicate with ServiceRegistry"
+                    );
+                }
+                _ => {}
+            }
+        }
+
+        registered
+    }
+}
+
+impl Message<HandleEvent> for BlueprintService {
+    type Reply = ();
+
+    async fn handle(
+        &mut self,
+        msg: HandleEvent,
+        _ctx: &mut Context<Self, Self::Reply>,
+    ) -> Self::Reply {
+        // Convert Event to TriggerEvent for blueprint execution
+        let (event_type, data) = match &msg.event {
+            Event::ServiceStateChanged { service, state, .. } => {
+                ("ServiceStateChanged".to_string(), serde_json::json!({
+                    "service": service,
+                    "state": format!("{:?}", state),
+                }))
+            }
+            Event::PointValueChanged { point, value, .. } => {
+                ("PointValueChanged".to_string(), serde_json::json!({
+                    "point": point,
+                    "value": value,
+                }))
+            }
+            Event::AlarmRaised { source, message, severity, .. } => {
+                ("AlarmRaised".to_string(), serde_json::json!({
+                    "source": source,
+                    "message": message,
+                    "severity": format!("{:?}", severity),
+                }))
+            }
+            Event::AlarmCleared { source, .. } => {
+                ("AlarmCleared".to_string(), serde_json::json!({
+                    "source": source,
+                }))
+            }
+            Event::DeviceStatusChanged { device, network, status, .. } => {
+                ("DeviceStatusChanged".to_string(), serde_json::json!({
+                    "device": device,
+                    "network": network,
+                    "status": format!("{:?}", status),
+                }))
+            }
+            Event::DeviceDiscovered { network, device, instance, address, .. } => {
+                ("DeviceDiscovered".to_string(), serde_json::json!({
+                    "network": network,
+                    "device": device,
+                    "instance": instance,
+                    "address": address.to_string(),
+                }))
+            }
+            Event::Custom { event_type, source, data, .. } => {
+                (event_type.clone(), serde_json::json!({
+                    "source": source,
+                    "data": data,
+                }))
+            }
+        };
+
+        // Trigger blueprints that listen for this event
+        let handlers = self.find_event_handlers(&event_type);
+
+        for (blueprint, event_node_id) in handlers {
+            let trigger = ExecutionTrigger::Event {
+                event_type: event_type.clone(),
+                data: data.clone(),
+            };
+
+            let result = self
+                .executor
+                .execute(Arc::clone(&blueprint), &event_node_id, trigger.clone())
+                .await;
+
+            // Handle suspended executions
+            if let ExecutionResult::Suspended { state } = &result {
+                let ctx = ExecutionContext::new(Arc::clone(&blueprint), trigger);
+                let suspension_id = format!("{}-{}", blueprint.id, state.node_id);
+                self.suspended.insert(
+                    suspension_id,
+                    SuspendedExecution {
+                        blueprint_id: blueprint.id.clone(),
+                        context: ctx,
+                        state: state.clone(),
+                    },
+                );
+            }
+        }
     }
 }
 

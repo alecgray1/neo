@@ -7,6 +7,9 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
+use crate::messages::Event;
+use crate::services::messages::ServiceRequest;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Pin Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -310,6 +313,9 @@ pub struct Blueprint {
     /// Description
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// Service configuration (if this blueprint acts as a service)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service: Option<ServiceConfig>,
     /// Blueprint-level variables
     #[serde(default)]
     pub variables: HashMap<String, VariableDef>,
@@ -325,6 +331,31 @@ fn default_version() -> String {
     "1.0.0".to_string()
 }
 
+fn default_singleton() -> bool {
+    true
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service Configuration
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Configuration for blueprints that act as services
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ServiceConfig {
+    /// Whether this blueprint should be registered as a service
+    #[serde(default)]
+    pub enabled: bool,
+    /// Event patterns to subscribe to (e.g., "PointValueChanged", "ServiceStateChanged/*")
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
+    /// Whether only one instance can run (default: true)
+    #[serde(default = "default_singleton")]
+    pub singleton: bool,
+    /// Human-readable description for the service
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
 impl Blueprint {
     /// Create a new empty blueprint
     pub fn new(id: &str, name: &str) -> Self {
@@ -333,10 +364,24 @@ impl Blueprint {
             name: name.to_string(),
             version: default_version(),
             description: None,
+            service: None,
             variables: HashMap::new(),
             nodes: Vec::new(),
             connections: Vec::new(),
         }
+    }
+
+    /// Check if this blueprint should be registered as a service
+    pub fn is_service(&self) -> bool {
+        self.service.as_ref().map(|s| s.enabled).unwrap_or(false)
+    }
+
+    /// Get service subscriptions (empty if not a service)
+    pub fn service_subscriptions(&self) -> Vec<String> {
+        self.service
+            .as_ref()
+            .map(|s| s.subscriptions.clone())
+            .unwrap_or_default()
     }
 
     /// Get a node by ID
@@ -388,6 +433,21 @@ pub enum ExecutionTrigger {
     Schedule { schedule_id: String },
     /// Triggered by a manual request
     Request { inputs: serde_json::Value },
+    /// Triggered when the blueprint-as-service starts
+    ServiceStart,
+    /// Triggered when the blueprint-as-service stops
+    ServiceStop,
+    /// Triggered by a service request (HandleRequest)
+    ServiceRequest {
+        request_id: String,
+        #[serde(skip)]
+        request: Option<ServiceRequest>,
+    },
+    /// Triggered by a system event routed to this service
+    ServiceEvent {
+        #[serde(skip)]
+        event: Option<Event>,
+    },
 }
 
 /// Result of executing a single node
@@ -434,6 +494,18 @@ pub enum WakeCondition {
         point_path: String,
         #[serde(default)]
         condition: Option<PointCondition>,
+    },
+    /// Wake periodically at a fixed interval
+    Interval {
+        /// Interval duration in milliseconds
+        interval_ms: u64,
+        /// Unix timestamp (ms) of next tick
+        next_tick_ms: u64,
+        /// Unique timer identifier
+        timer_id: String,
+        /// Current tick count
+        #[serde(default)]
+        tick_count: u64,
     },
 }
 

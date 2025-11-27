@@ -1,0 +1,92 @@
+{
+  "id": "service-monitor",
+  "name": "Service Monitor Blueprint",
+  "version": "1.0.0",
+  "description": "A service that prints a random 3-letter code every 5 seconds",
+  "service": {
+    "enabled": true,
+    "subscriptions": ["ServiceStateChanged"],
+    "singleton": true,
+    "description": "Prints random codes periodically"
+  },
+  "variables": {
+    "tickCount": {
+      "type": { "type": "Integer" },
+      "default": 0,
+      "description": "Count of timer ticks"
+    }
+  },
+  "nodes": [
+    {
+      "id": "on-start",
+      "type": "neo/OnServiceStart",
+      "position": { "x": 50, "y": 50 },
+      "config": {}
+    },
+    {
+      "id": "start-log",
+      "type": "neo/Log",
+      "position": { "x": 250, "y": 50 },
+      "config": {
+        "defaults": {
+          "message": "Service started - will print random code every 5 seconds"
+        },
+        "level": "info"
+      }
+    },
+    {
+      "id": "timer",
+      "type": "neo/SetTimer",
+      "position": { "x": 450, "y": 50 },
+      "config": {
+        "defaults": {
+          "interval_ms": 5000
+        }
+      }
+    },
+    {
+      "id": "random-code",
+      "type": "neo/RandomString",
+      "position": { "x": 450, "y": 150 },
+      "config": {
+        "charset": "uppercase",
+        "defaults": {
+          "length": 3
+        }
+      }
+    },
+    {
+      "id": "tick-log",
+      "type": "neo/Log",
+      "position": { "x": 650, "y": 50 },
+      "config": {
+        "level": "info"
+      }
+    },
+    {
+      "id": "on-stop",
+      "type": "neo/OnServiceStop",
+      "position": { "x": 50, "y": 250 },
+      "config": {}
+    },
+    {
+      "id": "stop-log",
+      "type": "neo/Log",
+      "position": { "x": 250, "y": 250 },
+      "config": {
+        "defaults": {
+          "message": "Service stopped"
+        },
+        "level": "info"
+      }
+    }
+  ],
+  "connections": [
+    { "from": "on-start.exec", "to": "start-log.exec" },
+    { "from": "start-log.exec", "to": "timer.exec" },
+    { "from": "timer.tick", "to": "random-code.exec" },
+    { "from": "random-code.exec", "to": "tick-log.exec" },
+    { "from": "random-code.result", "to": "tick-log.message" },
+    { "from": "on-stop.exec", "to": "stop-log.exec" }
+  ]
+}

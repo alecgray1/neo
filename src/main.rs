@@ -4,7 +4,10 @@ use kameo::actor::Spawn;
 use kameo_actors::DeliveryStrategy;
 use neo::actors::bacnet::{BACnetIOActor, BACnetNetworkActor};
 use neo::actors::{EventRouter, PubSubBroker};
-use neo::blueprints::{start_background_tasks, BlueprintService, ListBlueprints};
+use neo::blueprints::{
+    start_background_tasks, BlueprintService, ListBlueprints, RegisterServiceBlueprints,
+    SetServiceRefs,
+};
 use neo::messages::NetworkMsg;
 use neo::services::{
     // Actor-based services
@@ -194,8 +197,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Start background task for latent nodes and file watching
     let blueprint_handle = start_background_tasks(blueprint_actor.clone());
 
-    // TODO: Connect BlueprintService to PubSub so blueprints can react to system events
-    // (e.g., PointValueChanged, DeviceDiscovered, etc.)
+    // Connect BlueprintService to PubSub and ServiceRegistry
+    blueprint_actor
+        .tell(SetServiceRefs {
+            pubsub: pubsub.clone(),
+            service_registry: registry.clone(),
+        })
+        .await?;
+    info!("  Connected to PubSub and ServiceRegistry");
+
+    // Register blueprints with service.enabled as services
+    match blueprint_actor.ask(RegisterServiceBlueprints).await {
+        Ok(count) if count > 0 => {
+            info!("  Registered {} blueprint(s) as services", count);
+        }
+        Ok(_) => {
+            info!("  No blueprint services to register");
+        }
+        Err(e) => {
+            tracing::warn!("  Failed to register blueprint services: {}", e);
+        }
+    }
 
     // Show loaded blueprints
     if let Ok(blueprints) = blueprint_actor.ask(ListBlueprints).await {

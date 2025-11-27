@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use rand::Rng;
 use serde_json::Value;
 
 use super::types::{LatentState, NodeDef, NodeResult, PinDef, PinType, WakeCondition};
@@ -162,9 +163,9 @@ where
     }
 }
 
-/// Async function-based node executor
+/// Async function-based node executor (reserved for future use)
 #[allow(dead_code)]
-pub struct AsyncFnNodeExecutor<F, Fut>
+struct AsyncFnNodeExecutor<F, Fut>
 where
     F: Fn(NodeContext) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = NodeOutput> + Send,
@@ -178,7 +179,8 @@ where
     F: Fn(NodeContext) -> Fut + Send + Sync,
     Fut: std::future::Future<Output = NodeOutput> + Send,
 {
-    pub fn new(func: F) -> Self {
+    #[allow(dead_code)]
+    fn new(func: F) -> Self {
         Self {
             func,
             _phantom: std::marker::PhantomData,
@@ -301,9 +303,14 @@ fn register_builtin_nodes(registry: &mut NodeRegistry) {
     // Utilities
     register_log(registry);
     register_variable_nodes(registry);
+    register_random_string(registry);
 
     // Latent (async) nodes
     register_latent_nodes(registry);
+    register_set_timer(registry);
+
+    // Service integration nodes
+    register_service_nodes(registry);
 }
 
 fn register_branch(registry: &mut NodeRegistry) {
@@ -670,6 +677,53 @@ fn register_variable_nodes(registry: &mut NodeRegistry) {
     });
 }
 
+fn register_random_string(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/RandomString".to_string(),
+        name: "Random String".to_string(),
+        category: "Utilities".to_string(),
+        pure: false, // Not pure - RNG produces different outputs each call
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in_with_default("length", PinType::Integer, Value::from(8)),
+            PinDef::exec_out("exec"),
+            PinDef::data_out("result", PinType::String),
+        ],
+        description: Some(
+            "Generate a random string. Configure charset via config.charset (uppercase, lowercase, letters, alphanumeric, numeric, hex)".to_string()
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let length = ctx.get_input_integer("length").unwrap_or(8) as usize;
+        let charset = ctx.get_config_string("charset").unwrap_or("alphanumeric");
+
+        let chars: Vec<char> = match charset {
+            "uppercase" => ('A'..='Z').collect(),
+            "lowercase" => ('a'..='z').collect(),
+            "letters" => ('A'..='Z').chain('a'..='z').collect(),
+            "alphanumeric" => ('A'..='Z').chain('a'..='z').chain('0'..='9').collect(),
+            "numeric" => ('0'..='9').collect(),
+            "hex" => ('0'..='9').chain('a'..='f').collect(),
+            custom => custom.chars().collect(),
+        };
+
+        let result: String = if chars.is_empty() {
+            String::new()
+        } else {
+            let mut rng = rand::thread_rng();
+            (0..length)
+                .map(|_| chars[rng.gen_range(0..chars.len())])
+                .collect()
+        };
+
+        let mut values = HashMap::new();
+        values.insert("result".to_string(), Value::String(result));
+        NodeOutput::continue_default(values)
+    });
+}
+
 fn register_latent_nodes(registry: &mut NodeRegistry) {
     // Delay - pauses execution for a specified duration
     let def = NodeDef {
@@ -773,6 +827,317 @@ fn register_latent_nodes(registry: &mut NodeRegistry) {
                 },
             }),
         }
+    });
+}
+
+fn register_set_timer(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/SetTimer".to_string(),
+        name: "Set Timer".to_string(),
+        category: "Flow Control".to_string(),
+        pure: false,
+        latent: true,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in_with_default("interval_ms", PinType::Integer, Value::from(1000)),
+            PinDef::exec_out("started"),
+            PinDef::exec_out("tick"),
+            PinDef::data_out("tick_count", PinType::Integer),
+        ],
+        description: Some(
+            "Start a repeating timer that fires 'tick' every N milliseconds. Timer stops when service stops.".to_string()
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let interval_ms = ctx.get_input_integer("interval_ms").unwrap_or(1000) as u64;
+
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+
+        let first_tick = now_ms + interval_ms;
+        let timer_id = format!("timer-{}-{}", ctx.node_id, now_ms);
+
+        let mut values = HashMap::new();
+        values.insert("tick_count".to_string(), Value::from(0));
+
+        // Return latent state - the timer will be managed by tick_latent
+        // First, continue to "started" to signal timer is set up
+        // The executor will handle scheduling the interval ticks
+        NodeOutput {
+            values,
+            result: NodeResult::Latent(LatentState {
+                node_id: ctx.node_id.clone(),
+                resume_pin: "tick".to_string(),
+                wake_condition: WakeCondition::Interval {
+                    interval_ms,
+                    next_tick_ms: first_tick,
+                    timer_id,
+                    tick_count: 0,
+                },
+            }),
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Service Integration Nodes
+// ─────────────────────────────────────────────────────────────────────────────
+
+fn register_service_nodes(registry: &mut NodeRegistry) {
+    // Event nodes (triggers)
+    register_on_service_state_changed(registry);
+    register_on_service_start(registry);
+    register_on_service_stop(registry);
+    register_on_service_request(registry);
+
+    // Action nodes
+    register_publish_event(registry);
+    register_respond_to_request(registry);
+    register_start_service(registry);
+    register_stop_service(registry);
+    register_get_service_status(registry);
+}
+
+/// OnServiceStateChanged - triggers when any service's state changes
+fn register_on_service_state_changed(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/OnServiceStateChanged".to_string(),
+        name: "On Service State Changed".to_string(),
+        category: "Service Events".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_out("exec"),
+            PinDef::data_out("service_name", PinType::String),
+            PinDef::data_out("state", PinType::String),
+        ],
+        description: Some(
+            "Triggered when a service state changes. Filter by service name via config.filter_service"
+                .to_string(),
+        ),
+    };
+
+    // This is an event node - outputs are set by the executor based on trigger data
+    registry.register_fn(def, |_ctx| NodeOutput::continue_default(HashMap::new()));
+}
+
+/// OnServiceStart - triggers when this blueprint-service starts
+fn register_on_service_start(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/OnServiceStart".to_string(),
+        name: "On Service Start".to_string(),
+        category: "Service Events".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![PinDef::exec_out("exec")],
+        description: Some(
+            "Triggered when this blueprint service starts. Use to initialize resources.".to_string(),
+        ),
+    };
+
+    registry.register_fn(def, |_ctx| NodeOutput::continue_default(HashMap::new()));
+}
+
+/// OnServiceStop - triggers when this blueprint-service stops
+fn register_on_service_stop(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/OnServiceStop".to_string(),
+        name: "On Service Stop".to_string(),
+        category: "Service Events".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![PinDef::exec_out("exec")],
+        description: Some(
+            "Triggered when this blueprint service stops. Use to cleanup resources.".to_string(),
+        ),
+    };
+
+    registry.register_fn(def, |_ctx| NodeOutput::continue_default(HashMap::new()));
+}
+
+/// OnServiceRequest - triggers when a request is received
+fn register_on_service_request(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/OnServiceRequest".to_string(),
+        name: "On Service Request".to_string(),
+        category: "Service Events".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_out("exec"),
+            PinDef::data_out("request_id", PinType::String),
+            PinDef::data_out("action", PinType::String),
+            PinDef::data_out("payload", PinType::Any),
+        ],
+        description: Some(
+            "Triggered when a service request is received. Use RespondToRequest to send a response."
+                .to_string(),
+        ),
+    };
+
+    registry.register_fn(def, |_ctx| NodeOutput::continue_default(HashMap::new()));
+}
+
+/// PublishEvent - emit a custom event to the PubSub system
+fn register_publish_event(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/PublishEvent".to_string(),
+        name: "Publish Event".to_string(),
+        category: "Service Actions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in("event_type", PinType::String),
+            PinDef::data_in_with_default("source", PinType::String, Value::String("blueprint".to_string())),
+            PinDef::data_in_with_default("data", PinType::Any, Value::Object(serde_json::Map::new())),
+            PinDef::exec_out("exec"),
+        ],
+        description: Some(
+            "Publish a custom event to the system event bus. Other services can subscribe to it."
+                .to_string(),
+        ),
+    };
+
+    // The actual publishing is handled by the executor which has access to PubSub
+    // This node just sets up the data - the executor reads it and publishes
+    registry.register_fn(def, |ctx| {
+        let event_type = ctx.get_input_string("event_type").unwrap_or("custom").to_string();
+        let source = ctx.get_input_string("source").unwrap_or("blueprint").to_string();
+        let data = ctx.get_input("data").cloned().unwrap_or(Value::Null);
+
+        let mut values = HashMap::new();
+        values.insert("_publish_event_type".to_string(), Value::String(event_type));
+        values.insert("_publish_source".to_string(), Value::String(source));
+        values.insert("_publish_data".to_string(), data);
+
+        NodeOutput::continue_default(values)
+    });
+}
+
+/// RespondToRequest - send a response for a service request
+fn register_respond_to_request(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/RespondToRequest".to_string(),
+        name: "Respond To Request".to_string(),
+        category: "Service Actions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in("request_id", PinType::String),
+            PinDef::data_in("response", PinType::Any),
+            PinDef::data_in_with_default("success", PinType::Boolean, Value::Bool(true)),
+            PinDef::exec_out("exec"),
+        ],
+        description: Some(
+            "Send a response for a service request received via OnServiceRequest.".to_string(),
+        ),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let request_id = ctx.get_input_string("request_id").unwrap_or("").to_string();
+        let response = ctx.get_input("response").cloned().unwrap_or(Value::Null);
+        let success = ctx.get_input_bool("success").unwrap_or(true);
+
+        let mut values = HashMap::new();
+        values.insert("_respond_request_id".to_string(), Value::String(request_id));
+        values.insert("_respond_data".to_string(), response);
+        values.insert("_respond_success".to_string(), Value::Bool(success));
+
+        NodeOutput::continue_default(values)
+    });
+}
+
+/// StartService - start another service by name
+fn register_start_service(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/StartService".to_string(),
+        name: "Start Service".to_string(),
+        category: "Service Actions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in("service_id", PinType::String),
+            PinDef::exec_out("success"),
+            PinDef::exec_out("failed"),
+            PinDef::data_out("error", PinType::String),
+        ],
+        description: Some("Start another service by its ID.".to_string()),
+    };
+
+    // The actual service control is handled by the executor
+    registry.register_fn(def, |ctx| {
+        let service_id = ctx.get_input_string("service_id").unwrap_or("").to_string();
+
+        let mut values = HashMap::new();
+        values.insert("_start_service_id".to_string(), Value::String(service_id));
+
+        // Default to success - executor will modify if needed
+        NodeOutput::continue_to("success", values)
+    });
+}
+
+/// StopService - stop another service by name
+fn register_stop_service(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/StopService".to_string(),
+        name: "Stop Service".to_string(),
+        category: "Service Actions".to_string(),
+        pure: false,
+        latent: false,
+        pins: vec![
+            PinDef::exec_in(),
+            PinDef::data_in("service_id", PinType::String),
+            PinDef::exec_out("success"),
+            PinDef::exec_out("failed"),
+            PinDef::data_out("error", PinType::String),
+        ],
+        description: Some("Stop another service by its ID.".to_string()),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let service_id = ctx.get_input_string("service_id").unwrap_or("").to_string();
+
+        let mut values = HashMap::new();
+        values.insert("_stop_service_id".to_string(), Value::String(service_id));
+
+        NodeOutput::continue_to("success", values)
+    });
+}
+
+/// GetServiceStatus - query the status of a service
+fn register_get_service_status(registry: &mut NodeRegistry) {
+    let def = NodeDef {
+        id: "neo/GetServiceStatus".to_string(),
+        name: "Get Service Status".to_string(),
+        category: "Service Actions".to_string(),
+        pure: true,
+        latent: false,
+        pins: vec![
+            PinDef::data_in("service_id", PinType::String),
+            PinDef::data_out("state", PinType::String),
+            PinDef::data_out("is_running", PinType::Boolean),
+            PinDef::data_out("uptime_secs", PinType::Integer),
+        ],
+        description: Some("Get the current status of a service.".to_string()),
+    };
+
+    registry.register_fn(def, |ctx| {
+        let service_id = ctx.get_input_string("service_id").unwrap_or("").to_string();
+
+        let mut values = HashMap::new();
+        values.insert("_get_status_service_id".to_string(), Value::String(service_id));
+        // Default values - executor will populate actual values
+        values.insert("state".to_string(), Value::String("unknown".to_string()));
+        values.insert("is_running".to_string(), Value::Bool(false));
+        values.insert("uptime_secs".to_string(), Value::from(0));
+
+        NodeOutput::pure(values)
     });
 }
 

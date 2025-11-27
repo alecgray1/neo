@@ -79,6 +79,7 @@ impl ExecutionContext {
             })
             .collect()
     }
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -162,6 +163,29 @@ impl BlueprintExecutor {
                 if let Some(obj) = inputs.as_object() {
                     for (key, value) in obj {
                         ctx.set_node_output(&node_id, key, value.clone());
+                    }
+                }
+            }
+            ExecutionTrigger::ServiceStart => {
+                // No special outputs for service start
+            }
+            ExecutionTrigger::ServiceStop => {
+                // No special outputs for service stop
+            }
+            ExecutionTrigger::ServiceRequest { request_id, request } => {
+                ctx.set_node_output(&node_id, "request_id", Value::String(request_id));
+                if let Some(req) = request {
+                    // Serialize the request for the blueprint
+                    if let Ok(req_value) = serde_json::to_value(&req) {
+                        ctx.set_node_output(&node_id, "request", req_value);
+                    }
+                }
+            }
+            ExecutionTrigger::ServiceEvent { event } => {
+                if let Some(evt) = event {
+                    // Serialize the event for the blueprint
+                    if let Ok(evt_value) = serde_json::to_value(&evt) {
+                        ctx.set_node_output(&node_id, "event", evt_value);
                     }
                 }
             }
