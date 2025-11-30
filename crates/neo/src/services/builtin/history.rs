@@ -16,7 +16,7 @@ use tokio::sync::oneshot;
 use crate::messages::Event;
 use crate::services::actor::{ServiceMsg, ServiceReply, ServiceStateTracker};
 use crate::services::messages::{HistorySample, ServiceRequest, ServiceResponse};
-use crate::types::{Error, PointQuality, PointValue, Result, ServiceState};
+use crate::types::{Error, PointQuality, PropertyValue, Result, ServiceState};
 
 // Table definition: key is "point_name:timestamp_micros", value is serialized sample
 const HISTORY_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("history");
@@ -48,7 +48,7 @@ struct StoredSample {
     /// Timestamp in microseconds since epoch
     ts: i64,
     /// Point value
-    v: PointValue,
+    v: PropertyValue,
     /// Quality indicator
     q: PointQuality,
 }
@@ -182,7 +182,7 @@ impl HistoryActor {
     fn store_sample(
         &mut self,
         point: &str,
-        value: &PointValue,
+        value: &PropertyValue,
         quality: PointQuality,
         timestamp: DateTime<Utc>,
     ) -> Result<()> {
@@ -448,7 +448,7 @@ mod tests {
         // Store a sample via event
         let event = Event::PointValueChanged {
             point: "test/point/1".to_string(),
-            value: PointValue::Real(72.5),
+            value: PropertyValue::Real(72.5),
             quality: PointQuality::Good,
             timestamp: std::time::Instant::now(),
             timestamp_utc: Utc::now(),
@@ -469,7 +469,7 @@ mod tests {
 
         let samples = reply_rx.await.unwrap().unwrap();
         assert_eq!(samples.len(), 1);
-        assert!(matches!(samples[0].value, PointValue::Real(v) if (v - 72.5).abs() < 0.01));
+        assert!(matches!(samples[0].value, PropertyValue::Real(v) if (v - 72.5).abs() < 0.01));
 
         // Stop
         let reply = actor.ask(ServiceMsg::Stop).await.unwrap();

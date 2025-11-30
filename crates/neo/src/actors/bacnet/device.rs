@@ -1,7 +1,7 @@
 use crate::actors::PubSubBroker;
 use crate::actors::bacnet::io::BACnetIOActor;
 use crate::messages::{BACnetIOMsg, BACnetIOReply, DeviceMsg, Event};
-use crate::types::{BACnetPoint, DeviceStatus, ObjectId, ObjectType, PointQuality, PointValue};
+use crate::types::{BACnetPoint, DeviceStatus, ObjectIdentifier, ObjectType, PropertyIdentifier, PointQuality, PropertyValue};
 use chrono::Utc;
 use dashmap::DashMap;
 use kameo_actors::pubsub::Publish;
@@ -15,7 +15,7 @@ pub struct BACnetDeviceActor {
     pub network_name: String,
     pub device_instance: u32,
     pub status: DeviceStatus,
-    pub points: DashMap<ObjectId, BACnetPoint>, // Points as simple structs, not actors
+    pub points: DashMap<ObjectIdentifier, BACnetPoint>, // Points as simple structs, not actors
     pubsub: Option<kameo::actor::ActorRef<PubSubBroker>>,
     io_actor: kameo::actor::ActorRef<BACnetIOActor>,  // Direct reference to I/O actor
 
@@ -50,7 +50,7 @@ impl BACnetDeviceActor {
     }
 
     /// Get a point from cache
-    pub fn get_point(&self, object_id: ObjectId) -> Option<BACnetPoint> {
+    pub fn get_point(&self, object_id: ObjectIdentifier) -> Option<BACnetPoint> {
         self.points.get(&object_id).map(|p| p.clone())
     }
 
@@ -62,8 +62,8 @@ impl BACnetDeviceActor {
     /// Update a point value and publish event
     async fn update_point_value(
         &self,
-        object_id: ObjectId,
-        value: PointValue,
+        object_id: ObjectIdentifier,
+        value: PropertyValue,
         quality: PointQuality,
     ) {
         if let Some(mut point_ref) = self.points.get_mut(&object_id) {
@@ -109,7 +109,7 @@ impl BACnetDeviceActor {
     }
 
     /// Publish point value change to PubSub
-    async fn publish_point_change(&self, object_id: ObjectId, point: &BACnetPoint) {
+    async fn publish_point_change(&self, object_id: ObjectIdentifier, point: &BACnetPoint) {
         if let Some(pubsub) = &self.pubsub {
             let event = Event::PointValueChanged {
                 point: format!("{}/{}/{}", self.network_name, self.device_name, object_id),
@@ -147,26 +147,12 @@ impl BACnetDeviceActor {
         }
     }
 
-    /// Convert our ObjectType to bacnet ObjectType (u32 constant)
-    pub fn convert_object_type(obj_type: ObjectType) -> bacnet::ObjectType {
-        // BACnet standard object type numbers
-        match obj_type {
-            ObjectType::AnalogInput => 0,   // OBJECT_ANALOG_INPUT
-            ObjectType::AnalogOutput => 1,  // OBJECT_ANALOG_OUTPUT
-            ObjectType::AnalogValue => 2,   // OBJECT_ANALOG_VALUE
-            ObjectType::BinaryInput => 3,   // OBJECT_BINARY_INPUT
-            ObjectType::BinaryOutput => 4,  // OBJECT_BINARY_OUTPUT
-            ObjectType::BinaryValue => 5,   // OBJECT_BINARY_VALUE
-            ObjectType::Device => 8,        // OBJECT_DEVICE
-        }
-    }
-
     /// Read a property from the real BACnet device via the I/O actor
     async fn read_property_real(
         &self,
-        object_id: ObjectId,
-        property_id: u8,
-    ) -> crate::types::Result<PointValue> {
+        object_id: ObjectIdentifier,
+        property_id: PropertyIdentifier,
+    ) -> crate::types::Result<PropertyValue> {
         debug!(
             "Reading {}/{} from device {} via I/O actor",
             self.device_name, object_id, self.device_instance
@@ -175,23 +161,22 @@ impl BACnetDeviceActor {
         match self.io_actor
             .ask(BACnetIOMsg::ReadProperty {
                 device_id: self.device_instance,
-                object_type: object_id.object_type,
-                object_instance: object_id.instance,
+                object_id,
                 property_id,
-                array_index: None,  // Read whole value (BACNET_ARRAY_ALL)
+                array_index: None,  // Read whole value
                 timeout_ms: Some(3000),  // 3 second timeout
             })
             .await
         {
             Ok(BACnetIOReply::PropertyValue(value)) => Ok(value),
             Ok(BACnetIOReply::IoError(e)) => {
-                Err(crate::types::Error::BACnet(e))
+                Err(crate::types::Error::Protocol(e))
             }
-            Ok(other) => Err(crate::types::Error::BACnet(format!(
+            Ok(other) => Err(crate::types::Error::Protocol(format!(
                 "Unexpected reply from I/O actor: {:?}",
                 other
             ))),
-            Err(e) => Err(crate::types::Error::BACnet(format!(
+            Err(e) => Err(crate::types::Error::Protocol(format!(
                 "Failed to send message to I/O actor: {}",
                 e
             ))),
@@ -221,11 +206,10 @@ impl BACnetDeviceActor {
 
         // Read all point values from device
         // Clone the keys to avoid holding the lock
-        let point_ids: Vec<ObjectId> = self.points.iter().map(|entry| *entry.key()).collect();
+        let point_ids: Vec<ObjectIdentifier> = self.points.iter().map(|entry| *entry.key()).collect();
 
         for object_id in point_ids {
-            match self.read_property_real(object_id, 85).await {
-                // 85 = present-value
+            match self.read_property_real(object_id, PropertyIdentifier::PresentValue).await {
                 Ok(value) => {
                     self.update_point_value(object_id, value, PointQuality::Good)
                         .await;
@@ -277,31 +261,36 @@ impl BACnetDeviceActor {
     async fn discover_points(&mut self) -> crate::types::Result<usize> {
         info!("Discovering points on device {} using object-list property", self.device_name);
 
-        // Step 1: Read the object-list array length (property 76, index 0)
+        // Create the device object identifier
+        let device_object_id = match ObjectIdentifier::new(ObjectType::Device, self.device_instance) {
+            Ok(id) => id,
+            Err(e) => return Err(crate::types::Error::Protocol(format!("Invalid device instance: {:?}", e))),
+        };
+
+        // Step 1: Read the object-list array length (property ObjectList, index 0)
         let length_reply = self.io_actor
             .ask(BACnetIOMsg::ReadPropertyRaw {
                 device_id: self.device_instance,
-                object_type: ObjectType::Device,
-                object_instance: self.device_instance,
-                property_id: 76,  // PROP_OBJECT_LIST
+                object_id: device_object_id,
+                property_id: PropertyIdentifier::ObjectList,
                 array_index: Some(0),  // Index 0 = array length
                 timeout_ms: Some(3000),
             })
             .await;
 
         let array_length: u32 = match length_reply {
-            Ok(BACnetIOReply::RawValue(bacnet::value::BACnetValue::Uint(len))) => {
+            Ok(BACnetIOReply::PropertyValue(PropertyValue::Unsigned(len))) => {
                 info!("Device {} object-list contains {} objects", self.device_name, len);
-                len as u32
+                len
             }
             Ok(BACnetIOReply::IoError(e)) => {
-                return Err(crate::types::Error::BACnet(format!("Failed to read object-list length: {}", e)));
+                return Err(crate::types::Error::Protocol(format!("Failed to read object-list length: {}", e)));
             }
             Ok(other) => {
-                return Err(crate::types::Error::BACnet(format!("Unexpected reply for object-list length: {:?}", other)));
+                return Err(crate::types::Error::Protocol(format!("Unexpected reply for object-list length: {:?}", other)));
             }
             Err(e) => {
-                return Err(crate::types::Error::BACnet(format!("Failed to send message: {}", e)));
+                return Err(crate::types::Error::Protocol(format!("Failed to send message: {}", e)));
             }
         };
 
@@ -317,49 +306,25 @@ impl BACnetDeviceActor {
             let obj_reply = self.io_actor
                 .ask(BACnetIOMsg::ReadPropertyRaw {
                     device_id: self.device_instance,
-                    object_type: ObjectType::Device,
-                    object_instance: self.device_instance,
-                    property_id: 76,  // PROP_OBJECT_LIST
+                    object_id: device_object_id,
+                    property_id: PropertyIdentifier::ObjectList,
                     array_index: Some(index),
                     timeout_ms: Some(3000),
                 })
                 .await;
 
             match obj_reply {
-                Ok(BACnetIOReply::RawValue(
-                    bacnet::value::BACnetValue::ObjectId {
-                        object_type,
-                        object_instance,
-                    }
-                )) => {
-                    // Convert BACnet object type to our ObjectType enum
-                    let obj_type = match object_type {
-                        0 => ObjectType::AnalogInput,
-                        1 => ObjectType::AnalogOutput,
-                        2 => ObjectType::AnalogValue,
-                        3 => ObjectType::BinaryInput,
-                        4 => ObjectType::BinaryOutput,
-                        5 => ObjectType::BinaryValue,
-                        8 => ObjectType::Device,
-                        _ => {
-                            debug!("Unknown object type {}, skipping", object_type);
-                            continue;
-                        }
-                    };
-
-                    // Skip the device object itself
-                    if obj_type != ObjectType::Device {
-                        object_identifiers.push(ObjectId {
-                            object_type: obj_type,
-                            instance: object_instance,
-                        });
+                Ok(BACnetIOReply::PropertyValue(PropertyValue::ObjectIdentifier(oid))) => {
+                    // Only include object types that have a present-value property
+                    if is_pollable_object_type(oid.object_type) {
+                        object_identifiers.push(oid);
                     }
                 }
                 Ok(BACnetIOReply::IoError(e)) => {
                     warn!("Failed to read object-list[{}]: {}", index, e);
                 }
                 Ok(other) => {
-                    warn!("Expected ObjectId at index {}, got {:?}", index, other);
+                    warn!("Expected ObjectIdentifier at index {}, got {:?}", index, other);
                 }
                 Err(e) => {
                     warn!("Failed to send message for object-list[{}]: {}", index, e);
@@ -377,8 +342,8 @@ impl BACnetDeviceActor {
 
         // Step 3: Create a point for each object and try to read its present value
         for object_id in &object_identifiers {
-            // Try to read the present value (property 85)
-            match self.read_property_real(*object_id, 85).await {
+            // Try to read the present value
+            match self.read_property_real(*object_id, PropertyIdentifier::PresentValue).await {
                 Ok(value) => {
                     let point = BACnetPoint {
                         object_id: *object_id,
@@ -386,7 +351,7 @@ impl BACnetDeviceActor {
                         quality: PointQuality::Good,
                         last_update: Instant::now(),
                         last_update_utc: Utc::now(),
-                        object_name: None,  // TODO: Read object-name property (ID 77)
+                        object_name: None,
                         description: None,
                         units: None,
                         cov_increment: None,
@@ -401,7 +366,7 @@ impl BACnetDeviceActor {
                     // Still create the point but with null value
                     let point = BACnetPoint {
                         object_id: *object_id,
-                        present_value: PointValue::Null,
+                        present_value: PropertyValue::Null,
                         quality: PointQuality::Uncertain,
                         last_update: Instant::now(),
                         last_update_utc: Utc::now(),
@@ -429,7 +394,7 @@ impl BACnetDeviceActor {
     #[allow(dead_code)]
     async fn read_point_metadata(
         &self,
-        _object_id: ObjectId,
+        _object_id: ObjectIdentifier,
     ) -> crate::types::Result<(Option<String>, Option<String>, Option<String>)> {
         // Property IDs from BACnet standard:
         // 77 = object-name
@@ -444,7 +409,7 @@ impl BACnetDeviceActor {
     async fn reconnect(&mut self) -> crate::types::Result<()> {
         // TODO: Implement reconnection via I/O actor
         // The I/O actor should handle disconnecting and reconnecting to devices
-        Err(crate::types::Error::BACnet(
+        Err(crate::types::Error::Protocol(
             "Reconnect not yet implemented for I/O actor architecture".to_string(),
         ))
     }
@@ -539,7 +504,7 @@ pub enum DeviceReply {
     },
     Polled,
     PropertyValue {
-        value: PointValue,
+        value: PropertyValue,
         quality: PointQuality,
     },
     PropertyWritten,
@@ -549,4 +514,27 @@ pub enum DeviceReply {
     Points(Vec<BACnetPoint>),
     Point(Option<BACnetPoint>),
     Failure(String),
+}
+
+/// Check if an object type has a present-value property that can be polled
+fn is_pollable_object_type(object_type: ObjectType) -> bool {
+    matches!(
+        object_type,
+        ObjectType::AnalogInput
+            | ObjectType::AnalogOutput
+            | ObjectType::AnalogValue
+            | ObjectType::BinaryInput
+            | ObjectType::BinaryOutput
+            | ObjectType::BinaryValue
+            | ObjectType::MultiStateInput
+            | ObjectType::MultiStateOutput
+            | ObjectType::MultiStateValue
+            | ObjectType::IntegerValue
+            | ObjectType::PositiveIntegerValue
+            | ObjectType::LargeAnalogValue
+            | ObjectType::LightingOutput
+            | ObjectType::BinaryLightingOutput
+            | ObjectType::Accumulator
+            | ObjectType::PulseConverter
+    )
 }

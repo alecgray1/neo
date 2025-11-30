@@ -9,7 +9,7 @@ use std::time::Instant;
 pub enum Event {
     PointValueChanged {
         point: String,
-        value: PointValue,
+        value: PropertyValue,
         quality: PointQuality,
         #[serde(skip, default = "Instant::now")]
         timestamp: Instant,
@@ -85,20 +85,20 @@ pub enum StationMsg {
 /// Point actor messages
 #[derive(Debug, Clone)]
 pub enum PointMsg {
-    UpdateValue(PointValue),
+    UpdateValue(PropertyValue),
     GetValue,
 }
 
 /// Device actor messages
 #[derive(Debug)]
 pub enum DeviceMsg {
-    ReadProperty { object_id: ObjectId, property_id: u8 },
-    WriteProperty { object_id: ObjectId, property_id: u8, value: PointValue },
+    ReadProperty { object_id: ObjectIdentifier, property_id: PropertyIdentifier },
+    WriteProperty { object_id: ObjectIdentifier, property_id: PropertyIdentifier, value: PropertyValue },
     Poll,
     GetStatus,
     DiscoverPoints,
     ListPoints,
-    GetPoint { object_id: ObjectId },
+    GetPoint { object_id: ObjectIdentifier },
     Reconnect,
 }
 
@@ -128,19 +128,17 @@ pub enum BACnetIOMsg {
     /// Read a property from a device
     ReadProperty {
         device_id: u32,
-        object_type: ObjectType,
-        object_instance: u32,
-        property_id: u8,
+        object_id: ObjectIdentifier,
+        property_id: PropertyIdentifier,
         array_index: Option<u32>,
         timeout_ms: Option<u64>,
     },
 
-    /// Read a property from a device, returning raw BACnetValue
+    /// Read a property from a device, returning raw PropertyValue
     ReadPropertyRaw {
         device_id: u32,
-        object_type: ObjectType,
-        object_instance: u32,
-        property_id: u8,
+        object_id: ObjectIdentifier,
+        property_id: PropertyIdentifier,
         array_index: Option<u32>,
         timeout_ms: Option<u64>,
     },
@@ -148,10 +146,10 @@ pub enum BACnetIOMsg {
     /// Write a property to a device
     WriteProperty {
         device_id: u32,
-        object_type: ObjectType,
-        object_instance: u32,
-        property_id: u8,
-        value: PointValue,
+        object_id: ObjectIdentifier,
+        property_id: PropertyIdentifier,
+        value: PropertyValue,
+        priority: Option<u8>,
     },
 
     /// Read multiple properties in one request (batch operation)
@@ -160,19 +158,19 @@ pub enum BACnetIOMsg {
         requests: Vec<PropertyReadRequest>,
     },
 
-    /// Connect to a new device
-    ConnectDevice {
+    /// Register a device address (BACnet is connectionless)
+    RegisterDevice {
         device_id: u32,
         address: std::net::SocketAddr,
     },
 
-    /// Disconnect from a device
-    DisconnectDevice {
+    /// Unregister a device
+    UnregisterDevice {
         device_id: u32,
     },
 
-    /// Check if device is connected
-    IsConnected {
+    /// Check if device is registered
+    IsRegistered {
         device_id: u32,
     },
 
@@ -182,29 +180,28 @@ pub enum BACnetIOMsg {
     /// Perform Who-Is discovery
     WhoIs {
         timeout_secs: u64,
-        subnet: Option<String>,
+        low_limit: Option<u32>,
+        high_limit: Option<u32>,
     },
 }
 
 /// Property read request for batch operations
 #[derive(Debug, Clone)]
 pub struct PropertyReadRequest {
-    pub object_type: ObjectType,
-    pub object_instance: u32,
-    pub property_id: u8,
+    pub object_id: ObjectIdentifier,
+    pub property_id: PropertyIdentifier,
     pub array_index: Option<u32>,
 }
 
 /// BACnet I/O Actor replies
 #[derive(Debug, Clone, kameo::Reply)]
 pub enum BACnetIOReply {
-    PropertyValue(PointValue),
-    RawValue(bacnet::value::BACnetValue),
+    PropertyValue(PropertyValue),
     PropertyWritten,
-    MultipleValues(Vec<std::result::Result<PointValue, String>>),
-    Connected,
-    Disconnected,
-    IsConnected(bool),
+    MultipleValues(Vec<std::result::Result<PropertyValue, String>>),
+    Registered,
+    Unregistered,
+    IsRegistered(bool),
     Statistics(BACnetIOStats),
     Devices(Vec<(String, u32, std::net::SocketAddr)>),
     IoError(String),

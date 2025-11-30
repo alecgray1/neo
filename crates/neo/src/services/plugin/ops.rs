@@ -14,7 +14,7 @@ use tokio::sync::mpsc;
 
 use crate::blueprints::NodeRegistryExt;
 use crate::messages::Event;
-use crate::types::PointValue;
+use crate::types::PropertyValue;
 
 /// Bridge state passed to each plugin runtime
 /// Contains references to Neo subsystems and plugin-specific data
@@ -45,14 +45,14 @@ pub struct PointReadRequest {
 #[derive(Debug, Clone)]
 pub struct PointReadResponse {
     pub request_id: u64,
-    pub result: Result<PointValue, String>,
+    pub result: Result<PropertyValue, String>,
 }
 
 /// Request to write a point value
 #[derive(Debug, Clone)]
 pub struct PointWriteRequest {
     pub path: String,
-    pub value: PointValue,
+    pub value: PropertyValue,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +163,7 @@ pub fn op_neo_event_publish(
 pub async fn op_neo_point_read(
     state: Rc<RefCell<OpState>>,
     #[string] path: String,
-) -> Result<PointValue, deno_core::error::AnyError> {
+) -> Result<PropertyValue, deno_core::error::AnyError> {
     // Get a unique request ID
     static REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let request_id = REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -200,7 +200,7 @@ pub async fn op_neo_point_read(
 pub fn op_neo_point_write(
     state: &OpState,
     #[string] path: String,
-    #[serde] value: PointValue,
+    #[serde] value: PropertyValue,
 ) -> Result<(), deno_core::error::AnyError> {
     let bridge = state.borrow::<PluginBridge>();
 

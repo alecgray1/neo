@@ -1,71 +1,10 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 use std::time::Instant;
 use ts_rs::TS;
 
-/// BACnet object identifier
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
-pub struct ObjectId {
-    pub object_type: ObjectType,
-    pub instance: u32,
-}
-
-impl fmt::Display for ObjectId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.object_type, self.instance)
-    }
-}
-
-/// BACnet object types
-#[derive(Debug, Clone, Copy, Hash, Eq, PartialEq, Serialize, Deserialize)]
-#[repr(u16)]
-pub enum ObjectType {
-    AnalogInput = 0,
-    AnalogOutput = 1,
-    AnalogValue = 2,
-    BinaryInput = 3,
-    BinaryOutput = 4,
-    BinaryValue = 5,
-    Device = 8,
-}
-
-impl fmt::Display for ObjectType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ObjectType::AnalogInput => write!(f, "AI"),
-            ObjectType::AnalogOutput => write!(f, "AO"),
-            ObjectType::AnalogValue => write!(f, "AV"),
-            ObjectType::BinaryInput => write!(f, "BI"),
-            ObjectType::BinaryOutput => write!(f, "BO"),
-            ObjectType::BinaryValue => write!(f, "BV"),
-            ObjectType::Device => write!(f, "Device"),
-        }
-    }
-}
-
-/// Point value types
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "bindings/")]
-pub enum PointValue {
-    Real(f32),
-    Unsigned(u32),
-    Boolean(bool),
-    Enumerated(u32),
-    Null,
-}
-
-impl fmt::Display for PointValue {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            PointValue::Real(v) => write!(f, "{:.2}", v),
-            PointValue::Unsigned(v) => write!(f, "{}", v),
-            PointValue::Boolean(v) => write!(f, "{}", v),
-            PointValue::Enumerated(v) => write!(f, "enum({})", v),
-            PointValue::Null => write!(f, "null"),
-        }
-    }
-}
+// Re-export BACnet types from the library
+pub use bacnet::{BacnetError, ObjectIdentifier, ObjectType, PropertyIdentifier, PropertyValue};
 
 /// Point quality indicator
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -80,8 +19,8 @@ pub enum PointQuality {
 /// BACnet point data structure (replaces point actor)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BACnetPoint {
-    pub object_id: ObjectId,
-    pub present_value: PointValue,
+    pub object_id: ObjectIdentifier,
+    pub present_value: PropertyValue,
     pub quality: PointQuality,
     #[serde(skip, default = "Instant::now")]
     pub last_update: Instant,
@@ -95,7 +34,7 @@ pub struct BACnetPoint {
 }
 
 impl BACnetPoint {
-    pub fn new(object_id: ObjectId, present_value: PointValue) -> Self {
+    pub fn new(object_id: ObjectIdentifier, present_value: PropertyValue) -> Self {
         Self {
             object_id,
             present_value,
@@ -177,7 +116,7 @@ pub enum Error {
     Database(String),
 
     #[error("BACnet error: {0}")]
-    BACnet(String),
+    BACnet(#[from] BacnetError),
 
     #[error("Other: {0}")]
     Other(String),

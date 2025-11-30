@@ -25,7 +25,7 @@ kameo_actors.workspace = true
 tokio.workspace = true
 
 # BACnet protocol
-bacnet = { git = "https://github.com/Green-Mod/bacnet-stack-rs", package = "bacnet" }
+bacnet = { path = "/home/alec/Personal/bacnet" }
 
 # Async utilities
 futures.workspace = true

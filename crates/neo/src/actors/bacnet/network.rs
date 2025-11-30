@@ -95,24 +95,24 @@ impl BACnetNetworkActor {
                 device_name, device_instance
             );
 
-            // Use I/O actor to connect to device if we have an address
+            // Use I/O actor to register device address (BACnet is connectionless)
             if let Some(addr) = device_address {
                 match self
                     .io_actor
-                    .ask(BACnetIOMsg::ConnectDevice {
+                    .ask(BACnetIOMsg::RegisterDevice {
                         device_id: device_instance,
                         address: addr,
                     })
                     .await
                 {
-                    Ok(BACnetIOReply::Connected) => {
-                        info!("I/O actor connected to device {} at {}", device_name, addr);
+                    Ok(BACnetIOReply::Registered) => {
+                        info!("I/O actor registered device {} at {}", device_name, addr);
                     }
                     Ok(BACnetIOReply::IoError(e)) => {
-                        warn!("Failed to connect to device {}: {}", device_name, e);
+                        warn!("Failed to register device {}: {}", device_name, e);
                     }
                     Err(e) => {
-                        warn!("Failed to send connect message to I/O actor: {}", e);
+                        warn!("Failed to send register message to I/O actor: {}", e);
                     }
                     _ => {
                         warn!("Unexpected reply from I/O actor");
@@ -191,7 +191,8 @@ impl BACnetNetworkActor {
             .io_actor
             .ask(BACnetIOMsg::WhoIs {
                 timeout_secs: 3,
-                subnet: None,
+                low_limit: None,
+                high_limit: None,
             })
             .await
         {
@@ -204,18 +205,18 @@ impl BACnetNetworkActor {
             }
             Ok(BACnetIOReply::IoError(e)) => {
                 warn!("Who-Is discovery failed: {}", e);
-                Err(crate::types::Error::BACnet(e))
+                Err(crate::types::Error::Protocol(e))
             }
             Err(e) => {
                 warn!("Failed to send Who-Is message to I/O actor: {}", e);
-                Err(crate::types::Error::BACnet(format!(
+                Err(crate::types::Error::Protocol(format!(
                     "I/O actor error: {}",
                     e
                 )))
             }
             _ => {
                 warn!("Unexpected reply from I/O actor");
-                Err(crate::types::Error::BACnet("Unexpected reply".to_string()))
+                Err(crate::types::Error::Protocol("Unexpected reply".to_string()))
             }
         }
     }

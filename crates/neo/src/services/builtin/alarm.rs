@@ -15,7 +15,7 @@ use wildmatch::WildMatch;
 use crate::messages::Event;
 use crate::services::actor::{ServiceMsg, ServiceReply, ServiceStateTracker};
 use crate::services::messages::{Alarm, AlarmState, ServiceRequest, ServiceResponse};
-use crate::types::{AlarmSeverity, PointValue, ServiceState};
+use crate::types::{AlarmSeverity, PropertyValue, ServiceState};
 
 /// Configuration for an alarm rule
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,9 +55,9 @@ pub enum AlarmCondition {
     /// Value is outside range
     OutOfRange { low: f32, high: f32 },
     /// Value equals a specific value
-    Equals { value: PointValue },
+    Equals { value: PropertyValue },
     /// Value does not equal a specific value
-    NotEquals { value: PointValue },
+    NotEquals { value: PropertyValue },
     /// Boolean is true
     IsTrue,
     /// Boolean is false
@@ -66,25 +66,25 @@ pub enum AlarmCondition {
 
 impl AlarmCondition {
     /// Evaluate the condition against a point value
-    fn evaluate(&self, value: &PointValue) -> bool {
+    fn evaluate(&self, value: &PropertyValue) -> bool {
         match (self, value) {
             // Numeric comparisons
-            (AlarmCondition::HighLimit { value: threshold }, PointValue::Real(v)) => {
-                *v > *threshold
+            (AlarmCondition::HighLimit { value: threshold }, PropertyValue::Real(v)) => {
+                v > threshold
             }
-            (AlarmCondition::HighLimit { value: threshold }, PointValue::Unsigned(v)) => {
+            (AlarmCondition::HighLimit { value: threshold }, PropertyValue::Unsigned(v)) => {
                 (*v as f32) > *threshold
             }
-            (AlarmCondition::LowLimit { value: threshold }, PointValue::Real(v)) => {
-                *v < *threshold
+            (AlarmCondition::LowLimit { value: threshold }, PropertyValue::Real(v)) => {
+                v < threshold
             }
-            (AlarmCondition::LowLimit { value: threshold }, PointValue::Unsigned(v)) => {
+            (AlarmCondition::LowLimit { value: threshold }, PropertyValue::Unsigned(v)) => {
                 (*v as f32) < *threshold
             }
-            (AlarmCondition::OutOfRange { low, high }, PointValue::Real(v)) => {
-                *v < *low || *v > *high
+            (AlarmCondition::OutOfRange { low, high }, PropertyValue::Real(v)) => {
+                v < low || v > high
             }
-            (AlarmCondition::OutOfRange { low, high }, PointValue::Unsigned(v)) => {
+            (AlarmCondition::OutOfRange { low, high }, PropertyValue::Unsigned(v)) => {
                 let v = *v as f32;
                 v < *low || v > *high
             }
@@ -94,8 +94,8 @@ impl AlarmCondition {
             (AlarmCondition::NotEquals { value: expected }, actual) => expected != actual,
 
             // Boolean comparisons
-            (AlarmCondition::IsTrue, PointValue::Boolean(v)) => *v,
-            (AlarmCondition::IsFalse, PointValue::Boolean(v)) => !*v,
+            (AlarmCondition::IsTrue, PropertyValue::Boolean(v)) => *v,
+            (AlarmCondition::IsFalse, PropertyValue::Boolean(v)) => !*v,
 
             // Type mismatches don't trigger
             _ => false,
@@ -225,7 +225,7 @@ impl AlarmActor {
     }
 
     /// Evaluate a point value against all alarm configs
-    fn evaluate_point(&mut self, point: &str, value: &PointValue, timestamp: DateTime<Utc>) {
+    fn evaluate_point(&mut self, point: &str, value: &PropertyValue, timestamp: DateTime<Utc>) {
         for config in &self.configs.clone() {
             if !config.enabled {
                 continue;
@@ -289,7 +289,7 @@ impl AlarmActor {
         &self,
         config: &AlarmConfig,
         point: &str,
-        value: &PointValue,
+        value: &PropertyValue,
         timestamp: DateTime<Utc>,
     ) -> Alarm {
         let message = config
@@ -605,7 +605,7 @@ mod tests {
         // Send a normal value - should not trigger alarm
         let event = Event::PointValueChanged {
             point: "zone1/temperature".to_string(),
-            value: PointValue::Real(72.0),
+            value: PropertyValue::Real(72.0),
             quality: PointQuality::Good,
             timestamp: std::time::Instant::now(),
             timestamp_utc: Utc::now(),
@@ -621,7 +621,7 @@ mod tests {
         // Send a high value - should trigger alarm
         let event = Event::PointValueChanged {
             point: "zone1/temperature".to_string(),
-            value: PointValue::Real(85.0),
+            value: PropertyValue::Real(85.0),
             quality: PointQuality::Good,
             timestamp: std::time::Instant::now(),
             timestamp_utc: Utc::now(),
@@ -659,30 +659,30 @@ mod tests {
     fn test_alarm_conditions() {
         // High limit
         let cond = AlarmCondition::HighLimit { value: 80.0 };
-        assert!(cond.evaluate(&PointValue::Real(85.0)));
-        assert!(!cond.evaluate(&PointValue::Real(75.0)));
+        assert!(cond.evaluate(&PropertyValue::Real(85.0)));
+        assert!(!cond.evaluate(&PropertyValue::Real(75.0)));
 
         // Low limit
         let cond = AlarmCondition::LowLimit { value: 50.0 };
-        assert!(cond.evaluate(&PointValue::Real(45.0)));
-        assert!(!cond.evaluate(&PointValue::Real(55.0)));
+        assert!(cond.evaluate(&PropertyValue::Real(45.0)));
+        assert!(!cond.evaluate(&PropertyValue::Real(55.0)));
 
         // Out of range
         let cond = AlarmCondition::OutOfRange {
             low: 60.0,
             high: 80.0,
         };
-        assert!(cond.evaluate(&PointValue::Real(55.0)));
-        assert!(cond.evaluate(&PointValue::Real(85.0)));
-        assert!(!cond.evaluate(&PointValue::Real(70.0)));
+        assert!(cond.evaluate(&PropertyValue::Real(55.0)));
+        assert!(cond.evaluate(&PropertyValue::Real(85.0)));
+        assert!(!cond.evaluate(&PropertyValue::Real(70.0)));
 
         // Boolean conditions
         let cond = AlarmCondition::IsTrue;
-        assert!(cond.evaluate(&PointValue::Boolean(true)));
-        assert!(!cond.evaluate(&PointValue::Boolean(false)));
+        assert!(cond.evaluate(&PropertyValue::Boolean(true)));
+        assert!(!cond.evaluate(&PropertyValue::Boolean(false)));
 
         let cond = AlarmCondition::IsFalse;
-        assert!(cond.evaluate(&PointValue::Boolean(false)));
-        assert!(!cond.evaluate(&PointValue::Boolean(true)));
+        assert!(cond.evaluate(&PropertyValue::Boolean(false)));
+        assert!(!cond.evaluate(&PropertyValue::Boolean(true)));
     }
 }

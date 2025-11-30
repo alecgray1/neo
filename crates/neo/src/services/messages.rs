@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 use uuid::Uuid;
 
-use crate::types::{AlarmSeverity, PointQuality, PointValue, ServiceState};
+use crate::types::{AlarmSeverity, PointQuality, PropertyValue, ServiceState};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Service Requests
@@ -209,7 +209,8 @@ pub enum ServiceResponse {
 #[ts(export, export_to = "bindings/")]
 pub struct HistorySample {
     pub timestamp: DateTime<Utc>,
-    pub value: PointValue,
+    #[ts(type = "unknown")]
+    pub value: PropertyValue,
     pub quality: PointQuality,
 }
 
@@ -230,7 +231,8 @@ pub struct Alarm {
     #[serde(default)]
     pub cleared_at: Option<DateTime<Utc>>,
     #[serde(default)]
-    pub value_at_trigger: Option<PointValue>,
+    #[ts(type = "unknown")]
+    pub value_at_trigger: Option<PropertyValue>,
 }
 
 /// Alarm lifecycle state
@@ -277,7 +279,8 @@ pub struct ScheduleEntry {
     pub days: Vec<Weekday>,
     /// Time in HH:MM:SS format
     pub time: String,
-    pub value: PointValue,
+    #[ts(type = "unknown")]
+    pub value: PropertyValue,
 }
 
 /// An exception to the normal schedule (e.g., holidays)
