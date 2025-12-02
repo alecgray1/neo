@@ -72,12 +72,17 @@ impl ProjectLoader {
             info!("Loaded alarm rules");
         }
 
+        // Load plugins
+        let plugins = Self::load_plugins(path).await?;
+        info!("Loaded {} plugins", plugins.len());
+
         Ok(Project {
             path: path.to_path_buf(),
             manifest,
             devices,
             schedules,
             blueprints,
+            plugins,
             alarm_rules,
         })
     }
@@ -219,6 +224,82 @@ impl ProjectLoader {
         let content = fs::read_to_string(&rules_path).await?;
         let rules: AlarmRulesConfig = toml::from_str(&content)?;
         Ok(Some(rules))
+    }
+
+    /// Load all plugins from the plugins/ directory
+    /// Each plugin is a subdirectory containing a neo-plugin.json manifest
+    async fn load_plugins(
+        project_path: &Path,
+    ) -> Result<HashMap<String, LoadedPlugin>, LoadError> {
+        let plugins_dir = project_path.join("plugins");
+        let mut plugins = HashMap::new();
+
+        if !plugins_dir.exists() {
+            debug!("No plugins directory found");
+            return Ok(plugins);
+        }
+
+        let mut entries = fs::read_dir(&plugins_dir).await?;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+
+            // Only process directories
+            if !path.is_dir() {
+                continue;
+            }
+
+            // Look for neo-plugin.json in the directory
+            let manifest_path = path.join("neo-plugin.json");
+            if !manifest_path.exists() {
+                // Also check in dist/ subdirectory (common output location)
+                let dist_manifest_path = path.join("dist").join("neo-plugin.json");
+                if dist_manifest_path.exists() {
+                    match Self::load_plugin(&path, &dist_manifest_path).await {
+                        Ok(plugin) => {
+                            debug!("Loaded plugin: {} from dist/", plugin.manifest.id);
+                            plugins.insert(plugin.manifest.id.clone(), plugin);
+                        }
+                        Err(e) => {
+                            warn!("Failed to load plugin from {}: {}", dist_manifest_path.display(), e);
+                        }
+                    }
+                }
+                continue;
+            }
+
+            match Self::load_plugin(&path, &manifest_path).await {
+                Ok(plugin) => {
+                    debug!("Loaded plugin: {}", plugin.manifest.id);
+                    plugins.insert(plugin.manifest.id.clone(), plugin);
+                }
+                Err(e) => {
+                    warn!("Failed to load plugin from {}: {}", manifest_path.display(), e);
+                }
+            }
+        }
+
+        Ok(plugins)
+    }
+
+    /// Load a single plugin from its manifest
+    async fn load_plugin(plugin_dir: &Path, manifest_path: &Path) -> Result<LoadedPlugin, LoadError> {
+        let content = fs::read_to_string(manifest_path).await?;
+        let manifest: PluginManifest = serde_json::from_str(&content)?;
+
+        // Resolve the entry path relative to the manifest location
+        let manifest_dir = manifest_path.parent().unwrap_or(plugin_dir);
+        let entry_path = manifest_dir.join(&manifest.entry).canonicalize().map_err(|e| {
+            LoadError::ReadError(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Plugin entry file not found: {} ({})", manifest.entry, e),
+            ))
+        })?;
+
+        Ok(LoadedPlugin {
+            manifest,
+            plugin_dir: plugin_dir.to_path_buf(),
+            entry_path,
+        })
     }
 
     /// Reload a specific device

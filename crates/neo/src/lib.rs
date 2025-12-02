@@ -4,7 +4,7 @@
 //! - Service management via `blueprint_runtime::service`
 //! - Type system via `blueprint_types`
 //! - Visual scripting via blueprints
-//! - JavaScript runtime via QuickJS
+//! - Process-isolated JavaScript plugins via deno_core
 //! - Code generation bridges (TypeScript, Blueprint schemas)
 //! - Project management and WebSocket API
 
@@ -12,8 +12,8 @@
 pub use blueprint_runtime;
 pub use blueprint_types;
 
-// JavaScript runtime integration
-pub mod js;
+// Process-isolated plugin system (deno_core)
+pub mod plugin;
 
 // Code generation bridges
 pub mod bridges;

@@ -13,6 +13,9 @@ name = "neo"
 path = "src/main.rs"
 
 [dependencies]
+# V8 binary serialization (for plugin IPC)
+v8_valueserializer = "0.1"
+
 # Internal blueprint crates
 blueprint_types.workspace = true
 blueprint_macros.workspace = true
@@ -75,9 +78,6 @@ ts-rs = { version = "10", features = [
   "uuid-impl",
   "serde-json-impl",
 ] }
-
-# QuickJS runtime for JS plugins
-rquickjs = { version = "0.6", features = ["bindgen", "classes", "loader", "futures", "parallel"] }
 
 [dev-dependencies]
 tokio-test.workspace = true

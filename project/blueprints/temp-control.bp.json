@@ -7,8 +7,8 @@
       "config": {},
       "id": "event-tick",
       "position": {
-        "x": 0,
-        "y": 140
+        "x": -60,
+        "y": 240
       },
       "type": "event/OnTick"
     },
@@ -38,8 +38,8 @@
       "config": {},
       "id": "compare",
       "position": {
-        "x": 500,
-        "y": 200
+        "x": 520,
+        "y": 220
       },
       "type": "compare/Greater"
     },
@@ -47,8 +47,8 @@
       "config": {},
       "id": "branch",
       "position": {
-        "x": 700,
-        "y": 200
+        "x": 820,
+        "y": 120
       },
       "type": "flow/Branch"
     },
@@ -56,8 +56,8 @@
       "config": {},
       "id": "print-cooling",
       "position": {
-        "x": 900,
-        "y": 150
+        "x": 1020,
+        "y": 20
       },
       "type": "utility/Print"
     },
@@ -65,8 +65,8 @@
       "config": {},
       "id": "print-heating",
       "position": {
-        "x": 900,
-        "y": 250
+        "x": 1160,
+        "y": 240
       },
       "type": "utility/Print"
     }

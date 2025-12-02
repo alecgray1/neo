@@ -1,0 +1,7 @@
+{
+  "id": "test-neo",
+  "name": "Test Neo",
+  "entry": "index.js",
+  "subscriptions": [],
+  "config": {}
+}

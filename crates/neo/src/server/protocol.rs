@@ -55,6 +55,39 @@ pub enum ClientMessage {
     Ping {
         id: String,
     },
+
+    /// Register a plugin (from Vite dev server)
+    #[serde(rename = "plugin:register")]
+    PluginRegister {
+        plugin: PluginRegistration,
+    },
+
+    /// Notify that a plugin was rebuilt (from Vite dev server)
+    #[serde(rename = "plugin:rebuilt")]
+    PluginRebuilt {
+        #[serde(rename = "pluginId")]
+        plugin_id: String,
+        #[serde(rename = "entryPath")]
+        entry_path: String,
+    },
+}
+
+/// Plugin registration data from Vite plugin
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PluginRegistration {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(rename = "entryPath")]
+    pub entry_path: String,
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
+    #[serde(rename = "tickInterval")]
+    pub tick_interval: Option<u64>,
+    #[serde(default)]
+    pub config: serde_json::Value,
 }
 
 /// Messages sent from server to client
@@ -97,6 +130,20 @@ pub enum ServerMessage {
     /// Pong response to ping
     Pong {
         id: String,
+    },
+
+    /// Plugin registration confirmed
+    #[serde(rename = "plugin:registered")]
+    PluginRegistered {
+        #[serde(rename = "pluginId")]
+        plugin_id: String,
+    },
+
+    /// Plugin restart notification
+    #[serde(rename = "plugin:restarted")]
+    PluginRestarted {
+        #[serde(rename = "pluginId")]
+        plugin_id: String,
     },
 }
 

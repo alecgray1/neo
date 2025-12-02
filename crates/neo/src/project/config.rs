@@ -197,6 +197,46 @@ pub struct BlueprintConfig {
     pub metadata: serde_json::Value,
 }
 
+/// Plugin manifest (plugins/*/neo-plugin.json)
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PluginManifest {
+    /// Unique plugin identifier
+    pub id: String,
+    /// Human-readable name
+    pub name: String,
+    /// Description
+    #[serde(default)]
+    pub description: Option<String>,
+    /// Entry point relative to plugin directory (e.g., "index.js")
+    #[serde(default = "default_plugin_entry")]
+    pub entry: String,
+    /// Event subscriptions
+    #[serde(default)]
+    pub subscriptions: Vec<String>,
+    /// Tick interval in milliseconds
+    #[serde(rename = "tickInterval")]
+    pub tick_interval: Option<u64>,
+    /// Plugin-specific configuration
+    #[serde(default)]
+    pub config: serde_json::Value,
+}
+
+fn default_plugin_entry() -> String {
+    "index.js".to_string()
+}
+
+/// A loaded plugin with resolved paths
+#[derive(Debug, Clone)]
+pub struct LoadedPlugin {
+    /// Plugin manifest
+    pub manifest: PluginManifest,
+    /// Absolute path to the plugin directory
+    pub plugin_dir: std::path::PathBuf,
+    /// Absolute path to the entry file
+    pub entry_path: std::path::PathBuf,
+}
+
 /// Loaded project with all configuration
 #[derive(Debug, Clone)]
 pub struct Project {
@@ -210,6 +250,8 @@ pub struct Project {
     pub schedules: HashMap<String, ScheduleConfig>,
     /// Loaded blueprints
     pub blueprints: HashMap<String, BlueprintConfig>,
+    /// Loaded plugins
+    pub plugins: HashMap<String, LoadedPlugin>,
     /// Loaded alarm rules
     pub alarm_rules: Option<AlarmRulesConfig>,
 }

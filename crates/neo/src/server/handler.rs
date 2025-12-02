@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::protocol::{ChangeType, ClientMessage, ErrorCode, ServerMessage};
+use super::protocol::{ChangeType, ClientMessage, ErrorCode, PluginRegistration, ServerMessage};
 use super::state::AppState;
 use crate::project::{BlueprintConfig, ProjectLoader};
 
@@ -103,6 +103,12 @@ async fn handle_client_message(state: &AppState, session_id: Uuid, text: &str) {
         }
         ClientMessage::Ping { id } => {
             send_to_client(state, session_id, ServerMessage::pong(id)).await;
+        }
+        ClientMessage::PluginRegister { plugin } => {
+            handle_plugin_register(state, session_id, plugin).await;
+        }
+        ClientMessage::PluginRebuilt { plugin_id, entry_path } => {
+            handle_plugin_rebuilt(state, session_id, &plugin_id, &entry_path).await;
         }
     }
 }
@@ -366,4 +372,64 @@ async fn send_error(
         message: message.into(),
     };
     send_to_client(state, session_id, error).await;
+}
+
+/// Handle plugin registration from Vite dev server
+async fn handle_plugin_register(state: &AppState, session_id: Uuid, plugin: PluginRegistration) {
+    let plugin_id = plugin.id.clone();
+    tracing::info!(
+        plugin_id = %plugin_id,
+        name = %plugin.name,
+        entry_path = %plugin.entry_path,
+        "Plugin registration request"
+    );
+
+    match state.register_dev_plugin(plugin).await {
+        Ok(()) => {
+            let response = ServerMessage::PluginRegistered {
+                plugin_id: plugin_id.clone(),
+            };
+            send_to_client(state, session_id, response).await;
+            tracing::info!(plugin_id = %plugin_id, "Plugin registered successfully");
+        }
+        Err(e) => {
+            send_error(
+                state,
+                session_id,
+                None,
+                ErrorCode::InternalError,
+                format!("Failed to register plugin: {}", e),
+            )
+            .await;
+        }
+    }
+}
+
+/// Handle plugin rebuilt notification from Vite dev server
+async fn handle_plugin_rebuilt(state: &AppState, session_id: Uuid, plugin_id: &str, entry_path: &str) {
+    tracing::info!(
+        plugin_id = %plugin_id,
+        entry_path = %entry_path,
+        "Plugin rebuilt notification"
+    );
+
+    match state.restart_dev_plugin(plugin_id, entry_path).await {
+        Ok(()) => {
+            let response = ServerMessage::PluginRestarted {
+                plugin_id: plugin_id.to_string(),
+            };
+            send_to_client(state, session_id, response).await;
+            tracing::info!(plugin_id = %plugin_id, "Plugin restarted successfully");
+        }
+        Err(e) => {
+            send_error(
+                state,
+                session_id,
+                None,
+                ErrorCode::InternalError,
+                format!("Failed to restart plugin: {}", e),
+            )
+            .await;
+        }
+    }
 }

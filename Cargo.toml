@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/neo",
+  "crates/neo-plugin-host",
   "crates/blueprint_types",
   "crates/blueprint_macros",
   "crates/blueprint_runtime",

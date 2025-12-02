@@ -1,0 +1,10 @@
+{
+  "name": "create-neo-plugin",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "create-neo-plugin": "index.js"
+  },
+  "files": ["index.js"],
+  "keywords": ["neo", "plugin", "create", "scaffold"]
+}

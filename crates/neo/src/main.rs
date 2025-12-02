@@ -17,7 +17,8 @@ use blueprint_runtime::NodeRegistry;
 use blueprint_types::{Blueprint, TypeRegistry};
 
 use neo::engine::{register_builtin_nodes, BlueprintExecutor};
-use neo::project::{BlueprintConfig, ProjectLoader, ProjectWatcher};
+use neo::plugin::{ProcessService, ProcessServiceConfig};
+use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
 use neo::server::{create_router, AppState};
 
 /// Neo Building Automation Server
@@ -93,6 +94,11 @@ async fn main() -> Result<()> {
                     &project.blueprints,
                 )
                 .await;
+            }
+
+            // Start plugins
+            if !project.plugins.is_empty() {
+                start_plugins(&service_manager, &project.plugins).await;
             }
 
             // Store project in state
@@ -212,6 +218,42 @@ fn blueprint_from_config(id: &str, config: &BlueprintConfig) -> Blueprint {
     }
 
     blueprint
+}
+
+/// Start all loaded plugins
+async fn start_plugins(
+    service_manager: &ServiceManager,
+    plugins: &std::collections::HashMap<String, LoadedPlugin>,
+) {
+    for (id, plugin) in plugins {
+        let config = ProcessServiceConfig::new(
+            &plugin.manifest.id,
+            &plugin.manifest.name,
+            &plugin.entry_path,
+        )
+        .with_config(plugin.manifest.config.clone())
+        .with_subscriptions(plugin.manifest.subscriptions.clone());
+
+        let config = if let Some(tick_ms) = plugin.manifest.tick_interval {
+            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
+        } else {
+            config
+        };
+
+        let service = ProcessService::new(config);
+
+        match service_manager.spawn(service).await {
+            Ok(handle) => {
+                info!(
+                    "Plugin started: {} (service_id: {})",
+                    plugin.manifest.name, handle.service_id
+                );
+            }
+            Err(e) => {
+                error!("Failed to start plugin {}: {}", id, e);
+            }
+        }
+    }
 }
 
 /// Wait for shutdown signal and cleanup

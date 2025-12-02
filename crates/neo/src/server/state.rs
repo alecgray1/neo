@@ -14,8 +14,9 @@ use blueprint_runtime::service::ServiceManager;
 use blueprint_types::TypeRegistry;
 
 use crate::project::{BlueprintConfig, Project};
+use crate::plugin::{ProcessService, ProcessServiceConfig};
 
-use super::protocol::ServerMessage;
+use super::protocol::{PluginRegistration, ServerMessage};
 
 /// Shared application state
 #[derive(Clone)]
@@ -38,6 +39,9 @@ struct AppStateInner {
 
     /// Connected clients
     clients: RwLock<HashMap<Uuid, ClientState>>,
+
+    /// Dev plugins registered via WebSocket (plugin_id -> registration)
+    dev_plugins: RwLock<HashMap<String, PluginRegistration>>,
 
     /// Broadcast channel for server-wide notifications
     broadcast_tx: broadcast::Sender<ServerMessage>,
@@ -68,6 +72,7 @@ impl AppState {
                 service_manager,
                 type_registry,
                 clients: RwLock::new(HashMap::new()),
+                dev_plugins: RwLock::new(HashMap::new()),
                 broadcast_tx,
             }),
         }
@@ -285,6 +290,95 @@ impl AppState {
         let clients = self.inner.clients.read().await;
         if let Some(client) = clients.get(&session_id) {
             let _ = client.tx.try_send(message);
+        }
+    }
+
+    /// Register a dev plugin from WebSocket
+    pub async fn register_dev_plugin(&self, registration: PluginRegistration) -> Result<(), String> {
+        let plugin_id = registration.id.clone();
+
+        // Store the registration
+        self.inner.dev_plugins.write().await.insert(plugin_id.clone(), registration.clone());
+
+        // Create and spawn the plugin service
+        let config = ProcessServiceConfig::new(
+            &registration.id,
+            &registration.name,
+            PathBuf::from(&registration.entry_path),
+        )
+        .with_config(registration.config.clone())
+        .with_subscriptions(registration.subscriptions.clone());
+
+        let config = if let Some(tick_ms) = registration.tick_interval {
+            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
+        } else {
+            config
+        };
+
+        let service = ProcessService::new(config);
+
+        match self.inner.service_manager.spawn(service).await {
+            Ok(handle) => {
+                tracing::info!(
+                    plugin_id = %plugin_id,
+                    service_id = %handle.service_id,
+                    "Dev plugin registered and started"
+                );
+                Ok(())
+            }
+            Err(e) => {
+                // Remove from dev_plugins on failure
+                self.inner.dev_plugins.write().await.remove(&plugin_id);
+                Err(format!("Failed to start plugin: {}", e))
+            }
+        }
+    }
+
+    /// Restart a dev plugin (called when it's rebuilt)
+    pub async fn restart_dev_plugin(&self, plugin_id: &str, entry_path: &str) -> Result<(), String> {
+        // Stop the existing service (service ID is just the plugin ID)
+        if let Err(e) = self.inner.service_manager.stop(plugin_id).await {
+            tracing::warn!("Failed to stop plugin {}: {}", plugin_id, e);
+        }
+
+        // Update the entry path in registration
+        let registration = {
+            let mut plugins = self.inner.dev_plugins.write().await;
+            if let Some(reg) = plugins.get_mut(plugin_id) {
+                reg.entry_path = entry_path.to_string();
+                reg.clone()
+            } else {
+                return Err(format!("Plugin {} not registered", plugin_id));
+            }
+        };
+
+        // Restart with updated path
+        let config = ProcessServiceConfig::new(
+            &registration.id,
+            &registration.name,
+            PathBuf::from(&registration.entry_path),
+        )
+        .with_config(registration.config.clone())
+        .with_subscriptions(registration.subscriptions.clone());
+
+        let config = if let Some(tick_ms) = registration.tick_interval {
+            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
+        } else {
+            config
+        };
+
+        let service = ProcessService::new(config);
+
+        match self.inner.service_manager.spawn(service).await {
+            Ok(handle) => {
+                tracing::info!(
+                    plugin_id = %plugin_id,
+                    service_id = %handle.service_id,
+                    "Dev plugin restarted"
+                );
+                Ok(())
+            }
+            Err(e) => Err(format!("Failed to restart plugin: {}", e))
         }
     }
 }
