@@ -152,6 +152,98 @@ export interface ProjectAPI {
   getSchedule(id: string): Promise<unknown>
 }
 
+// Extension types
+export interface ExtensionInfo {
+  id: string
+  name: string
+  displayName: string
+  version: string
+  description: string
+}
+
+export interface CommandContribution {
+  id: string
+  title: string
+  category?: string
+  icon?: string
+  enablement?: string
+  extensionId: string
+}
+
+export interface ViewContainerContribution {
+  id: string
+  title: string
+  icon: string
+  extensionId: string
+}
+
+export interface ViewContribution {
+  id: string
+  name: string
+  type?: 'tree' | 'webview'
+  when?: string
+  icon?: string
+  extensionId: string
+}
+
+export interface MenuContribution {
+  command: string
+  when?: string
+  group?: string
+  extensionId: string
+}
+
+export interface KeybindingContribution {
+  command: string
+  key: string
+  mac?: string
+  when?: string
+  extensionId: string
+}
+
+export interface CollectedContributions {
+  commands: CommandContribution[]
+  viewsContainers: {
+    activitybar: ViewContainerContribution[]
+    panel: ViewContainerContribution[]
+  }
+  views: Record<string, ViewContribution[]>
+  menus: Record<string, MenuContribution[]>
+  keybindings: KeybindingContribution[]
+}
+
+export interface ExtensionAPI {
+  // Get all contributions from extensions
+  getContributions(): Promise<CollectedContributions>
+
+  // Get list of installed extensions
+  getExtensions(): Promise<ExtensionInfo[]>
+
+  // Execute an extension command
+  executeCommand<T = unknown>(id: string, ...args: unknown[]): Promise<T>
+
+  // Listen for extension events
+  onExtensionActivated(callback: (data: { extensionId: string }) => void): () => void
+  onCommandRegistered(callback: (data: { id: string }) => void): () => void
+  onCommandUnregistered(callback: (data: { id: string }) => void): () => void
+
+  // Webview events
+  onWebviewCreate(
+    callback: (data: {
+      handle: string
+      viewType: string
+      title: string
+      column: number
+      options: unknown
+    }) => void
+  ): () => void
+  onWebviewSetHtml(callback: (data: { handle: string; html: string }) => void): () => void
+  onWebviewDispose(callback: (data: { handle: string }) => void): () => void
+
+  // Context events
+  onContextSet(callback: (data: { key: string; value: unknown }) => void): () => void
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -161,5 +253,6 @@ declare global {
     windowAPI: WindowAPI
     serverAPI: ServerAPI
     projectAPI: ProjectAPI
+    extensionAPI: ExtensionAPI
   }
 }

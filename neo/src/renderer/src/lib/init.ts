@@ -8,6 +8,7 @@ import { registerQuickAccessProvider } from './quickaccess/registry'
 import { createCommandsProvider, createHelpProvider } from './quickaccess'
 import { registerBuiltinMenus } from './menus/builtinMenus'
 import { serverStore } from './stores/server.svelte'
+import { getExtensionService } from './services/ExtensionService'
 
 let _initialized = false
 let _disposables: DisposableStore | null = null
@@ -40,6 +41,13 @@ export function initializeCommandSystem(): IDisposable {
   // Initialize server store
   serverStore.init()
   _disposables.add({ dispose: () => serverStore.destroy() })
+
+  // Load extension contributions (async, but we don't block on it)
+  const extensionService = getExtensionService()
+  _disposables.add(extensionService)
+  extensionService.loadContributions().catch((err) => {
+    console.error('Failed to load extension contributions:', err)
+  })
 
   _initialized = true
 

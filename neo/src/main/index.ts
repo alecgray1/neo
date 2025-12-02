@@ -5,6 +5,7 @@ import icon from '../../resources/icon.png?asset'
 import { themeService } from './services/ThemeService'
 import { layoutService } from './services/LayoutService'
 import { webSocketService } from './services/WebSocketService'
+import { getExtensionHostMain } from './extensionHost'
 
 const isMac = process.platform === 'darwin'
 
@@ -79,6 +80,20 @@ app.whenReady().then(() => {
   themeService.setMainWindow(mainWindow)
   webSocketService.setMainWindow(mainWindow)
 
+  // Initialize extension host
+  const extensionHost = getExtensionHostMain()
+  extensionHost.setMainWindow(mainWindow)
+
+  // Start extension host after window is ready
+  mainWindow.webContents.once('did-finish-load', async () => {
+    try {
+      await extensionHost.start()
+      console.log('[Main] Extension host started')
+    } catch (err) {
+      console.error('[Main] Failed to start extension host:', err)
+    }
+  })
+
   // Window control IPC handlers
   ipcMain.handle('window:minimize', () => mainWindow.minimize())
   ipcMain.handle('window:maximize', () => {
@@ -110,6 +125,9 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  // Clean up extension host
+  getExtensionHostMain().dispose()
+
   if (process.platform !== 'darwin') {
     app.quit()
   }

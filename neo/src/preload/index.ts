@@ -96,6 +96,161 @@ const serverAPI = {
   }
 }
 
+// Extension API for querying extension contributions
+export interface ExtensionInfo {
+  id: string
+  name: string
+  displayName: string
+  version: string
+  description: string
+}
+
+export interface CommandContribution {
+  id: string
+  title: string
+  category?: string
+  icon?: string
+  enablement?: string
+  extensionId: string
+}
+
+export interface ViewContainerContribution {
+  id: string
+  title: string
+  icon: string
+  extensionId: string
+}
+
+export interface ViewContribution {
+  id: string
+  name: string
+  type?: 'tree' | 'webview'
+  when?: string
+  icon?: string
+  extensionId: string
+}
+
+export interface MenuContribution {
+  command: string
+  when?: string
+  group?: string
+  extensionId: string
+}
+
+export interface KeybindingContribution {
+  command: string
+  key: string
+  mac?: string
+  when?: string
+  extensionId: string
+}
+
+export interface CollectedContributions {
+  commands: CommandContribution[]
+  viewsContainers: {
+    activitybar: ViewContainerContribution[]
+    panel: ViewContainerContribution[]
+  }
+  views: Record<string, ViewContribution[]>
+  menus: Record<string, MenuContribution[]>
+  keybindings: KeybindingContribution[]
+}
+
+const extensionAPI = {
+  // Get all contributions from extensions
+  getContributions: (): Promise<CollectedContributions> =>
+    ipcRenderer.invoke('extension:getContributions'),
+
+  // Get list of installed extensions
+  getExtensions: (): Promise<ExtensionInfo[]> => ipcRenderer.invoke('extension:getExtensions'),
+
+  // Execute an extension command
+  executeCommand: <T = unknown>(id: string, ...args: unknown[]): Promise<T> =>
+    ipcRenderer.invoke('extension:executeCommand', id, args),
+
+  // Listen for extension events
+  onExtensionActivated: (
+    callback: (data: { extensionId: string }) => void
+  ): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { extensionId: string }): void =>
+      callback(data)
+    ipcRenderer.on('extension:activated', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extension:activated', handler)
+    }
+  },
+
+  onCommandRegistered: (callback: (data: { id: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { id: string }): void =>
+      callback(data)
+    ipcRenderer.on('extension:commandRegistered', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extension:commandRegistered', handler)
+    }
+  },
+
+  onCommandUnregistered: (callback: (data: { id: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { id: string }): void =>
+      callback(data)
+    ipcRenderer.on('extension:commandUnregistered', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extension:commandUnregistered', handler)
+    }
+  },
+
+  // Webview events
+  onWebviewCreate: (
+    callback: (data: {
+      handle: string
+      viewType: string
+      title: string
+      column: number
+      options: unknown
+    }) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { handle: string; viewType: string; title: string; column: number; options: unknown }
+    ): void => callback(data)
+    ipcRenderer.on('webview:create', handler)
+    return (): void => {
+      ipcRenderer.removeListener('webview:create', handler)
+    }
+  },
+
+  onWebviewSetHtml: (callback: (data: { handle: string; html: string }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { handle: string; html: string }
+    ): void => callback(data)
+    ipcRenderer.on('webview:setHtml', handler)
+    return (): void => {
+      ipcRenderer.removeListener('webview:setHtml', handler)
+    }
+  },
+
+  onWebviewDispose: (callback: (data: { handle: string }) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { handle: string }): void =>
+      callback(data)
+    ipcRenderer.on('webview:dispose', handler)
+    return (): void => {
+      ipcRenderer.removeListener('webview:dispose', handler)
+    }
+  },
+
+  // Context events
+  onContextSet: (callback: (data: { key: string; value: unknown }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { key: string; value: unknown }
+    ): void => callback(data)
+    ipcRenderer.on('context:set', handler)
+    return (): void => {
+      ipcRenderer.removeListener('context:set', handler)
+    }
+  }
+}
+
 // Project API - high-level data operations
 const projectAPI = {
   // Project info
@@ -128,6 +283,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('windowAPI', windowAPI)
     contextBridge.exposeInMainWorld('serverAPI', serverAPI)
     contextBridge.exposeInMainWorld('projectAPI', projectAPI)
+    contextBridge.exposeInMainWorld('extensionAPI', extensionAPI)
   } catch (error) {
     console.error(error)
   }
@@ -146,4 +302,6 @@ if (process.contextIsolated) {
   window.serverAPI = serverAPI
   // @ts-ignore (define in dts)
   window.projectAPI = projectAPI
+  // @ts-ignore (define in dts)
+  window.extensionAPI = extensionAPI
 }

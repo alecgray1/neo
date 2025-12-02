@@ -3,3 +3,4 @@
 export * from './types'
 export * from './container'
 export * from './context'
+export * from './ExtensionService'
