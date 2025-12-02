@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { themeService } from './services/ThemeService'
 import { layoutService } from './services/LayoutService'
+import { webSocketService } from './services/WebSocketService'
 
 const isMac = process.platform === 'darwin'
 
@@ -70,9 +71,13 @@ app.whenReady().then(() => {
   // Initialize layout service
   layoutService.registerIPC()
 
-  // Create window and connect to theme service
+  // Initialize WebSocket service
+  webSocketService.registerIPC()
+
+  // Create window and connect to services
   const mainWindow = createWindow()
   themeService.setMainWindow(mainWindow)
+  webSocketService.setMainWindow(mainWindow)
 
   // Window control IPC handlers
   ipcMain.handle('window:minimize', () => mainWindow.minimize())

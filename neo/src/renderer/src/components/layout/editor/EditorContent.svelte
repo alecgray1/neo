@@ -87,7 +87,11 @@
     {:else if document.language === 'blueprint'}
       <!-- Blueprint editor takes full area (handles its own panning) -->
       <div class="flex-1 overflow-hidden">
-        <BlueprintEditor content={document.content} onchange={handleContentChange} />
+        <BlueprintEditor
+          content={document.content}
+          externalUpdateCounter={document.externalUpdateCounter}
+          onchange={handleContentChange}
+        />
       </div>
     {:else}
       <ScrollArea class="flex-1">

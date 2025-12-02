@@ -174,6 +174,30 @@ fn validate_value_type(value: &Value, expected: &PinType) -> Result<(), String> 
             }
         }
         PinType::Exec => Err("exec type cannot have a value".to_string()),
+        PinType::Event { .. } => {
+            // Event validation requires the type registry; basic validation here
+            if value.is_object() {
+                Ok(())
+            } else {
+                Err("expected event object".to_string())
+            }
+        }
+        PinType::Object { .. } => {
+            // Object validation requires the type registry; basic validation here
+            if value.is_object() {
+                Ok(())
+            } else {
+                Err("expected object".to_string())
+            }
+        }
+        PinType::Handle { .. } => {
+            // Handle is an opaque reference, usually represented as an object with __handle__ key
+            if value.is_object() {
+                Ok(())
+            } else {
+                Err("expected handle object".to_string())
+            }
+        }
     }
 }
 

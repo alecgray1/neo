@@ -7,6 +7,7 @@ import { startKeybindingListener } from './keybindings/listener'
 import { registerQuickAccessProvider } from './quickaccess/registry'
 import { createCommandsProvider, createHelpProvider } from './quickaccess'
 import { registerBuiltinMenus } from './menus/builtinMenus'
+import { serverStore } from './stores/server.svelte'
 
 let _initialized = false
 let _disposables: DisposableStore | null = null
@@ -35,6 +36,10 @@ export function initializeCommandSystem(): IDisposable {
 
   // Start keybinding listener
   _disposables.add(startKeybindingListener())
+
+  // Initialize server store
+  serverStore.init()
+  _disposables.add({ dispose: () => serverStore.destroy() })
 
   _initialized = true
 

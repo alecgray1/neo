@@ -4,7 +4,6 @@
 //! including service adapters and integration with the neo actor system.
 //!
 //! The actual BlueprintService actor remains in neo since it's tightly
-//! integrated with neo's actor system (kameo) and service registry.
 
 pub use blueprint_runtime;
 pub use blueprint_types;

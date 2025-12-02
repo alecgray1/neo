@@ -1,0 +1,42 @@
+[device]
+id = "vav-101"
+name = "VAV Box 101"
+type = "vav"
+description = "Variable Air Volume box for Zone 101"
+manufacturer = "Johnson Controls"
+model = "VAV-100"
+
+[device.location]
+building = "Main"
+floor = "1"
+zone = "North"
+room = "101"
+
+[connection]
+protocol = "bacnet"
+device_id = 101
+address = "192.168.1.101"
+
+[[points]]
+id = "zone-temp"
+name = "Zone Temperature"
+object_type = "analog-input"
+instance = 1
+unit = "degF"
+description = "Current zone temperature"
+
+[[points]]
+id = "zone-setpoint"
+name = "Zone Setpoint"
+object_type = "analog-value"
+instance = 1
+unit = "degF"
+description = "Zone temperature setpoint"
+
+[[points]]
+id = "damper-position"
+name = "Damper Position"
+object_type = "analog-output"
+instance = 1
+unit = "%"
+description = "VAV damper position"

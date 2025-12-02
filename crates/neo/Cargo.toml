@@ -19,9 +19,6 @@ blueprint_macros.workspace = true
 blueprint_runtime.workspace = true
 blueprint_server.workspace = true
 
-# Actor system
-kameo.workspace = true
-kameo_actors.workspace = true
 tokio.workspace = true
 
 # BACnet protocol
@@ -59,6 +56,9 @@ tracing-subscriber.workspace = true
 # Time
 chrono.workspace = true
 
+# CLI
+clap = { version = "4", features = ["derive"] }
+
 # Utilities
 thiserror.workspace = true
 anyhow.workspace = true
@@ -70,10 +70,14 @@ rand.workspace = true
 parking_lot.workspace = true
 
 # TypeScript type generation
-ts-rs = { version = "10", features = ["chrono-impl", "uuid-impl", "serde-json-impl"] }
+ts-rs = { version = "10", features = [
+  "chrono-impl",
+  "uuid-impl",
+  "serde-json-impl",
+] }
 
-# Deno runtime for JS/TS plugins
-deno_core = "0.311"
+# QuickJS runtime for JS plugins
+rquickjs = { version = "0.6", features = ["bindgen", "classes", "loader", "futures", "parallel"] }
 
 [dev-dependencies]
 tokio-test.workspace = true

@@ -5,7 +5,16 @@ import type { NodeDef, PinDef } from './types'
 const builtInNodes: NodeDef[] = [
   // === Events ===
   {
-    id: 'neo/OnEvent',
+    id: 'event/OnTick',
+    name: 'On Tick',
+    category: 'Events',
+    description: 'Triggered every tick',
+    pins: [
+      { name: 'exec', direction: 'output', type: 'Exec', description: 'Execution output' }
+    ]
+  },
+  {
+    id: 'event/OnEvent',
     name: 'On Event',
     category: 'Events',
     description: 'Triggered when an event occurs',
@@ -18,7 +27,7 @@ const builtInNodes: NodeDef[] = [
 
   // === Flow Control ===
   {
-    id: 'neo/Branch',
+    id: 'flow/Branch',
     name: 'Branch',
     category: 'Flow Control',
     description: 'Conditional branch based on boolean condition',
@@ -30,46 +39,20 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Sequence',
+    id: 'flow/Sequence',
     name: 'Sequence',
     category: 'Flow Control',
     description: 'Execute multiple outputs in sequence',
     pins: [
       { name: 'exec', direction: 'input', type: 'Exec' },
       { name: 'then_0', direction: 'output', type: 'Exec' },
-      { name: 'then_1', direction: 'output', type: 'Exec' },
-      { name: 'then_2', direction: 'output', type: 'Exec' }
-    ]
-  },
-  {
-    id: 'neo/Delay',
-    name: 'Delay',
-    category: 'Flow Control',
-    latent: true,
-    description: 'Wait for a specified duration',
-    pins: [
-      { name: 'exec', direction: 'input', type: 'Exec' },
-      { name: 'duration', direction: 'input', type: 'Real', default: 1.0, description: 'Delay in seconds' },
-      { name: 'completed', direction: 'output', type: 'Exec' }
+      { name: 'then_1', direction: 'output', type: 'Exec' }
     ]
   },
 
   // === Logic ===
   {
-    id: 'neo/Compare',
-    name: 'Compare',
-    category: 'Logic',
-    description: 'Compare two values',
-    pins: [
-      { name: 'exec', direction: 'input', type: 'Exec' },
-      { name: 'a', direction: 'input', type: 'Any' },
-      { name: 'b', direction: 'input', type: 'Any' },
-      { name: 'exec', direction: 'output', type: 'Exec' },
-      { name: 'result', direction: 'output', type: 'Boolean' }
-    ]
-  },
-  {
-    id: 'neo/And',
+    id: 'logic/And',
     name: 'AND',
     category: 'Logic',
     pure: true,
@@ -81,7 +64,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Or',
+    id: 'logic/Or',
     name: 'OR',
     category: 'Logic',
     pure: true,
@@ -93,7 +76,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Not',
+    id: 'logic/Not',
     name: 'NOT',
     category: 'Logic',
     pure: true,
@@ -103,10 +86,73 @@ const builtInNodes: NodeDef[] = [
       { name: 'result', direction: 'output', type: 'Boolean' }
     ]
   },
+  {
+    id: 'logic/Xor',
+    name: 'XOR',
+    category: 'Logic',
+    pure: true,
+    description: 'Logical XOR of two booleans',
+    pins: [
+      { name: 'a', direction: 'input', type: 'Boolean' },
+      { name: 'b', direction: 'input', type: 'Boolean' },
+      { name: 'result', direction: 'output', type: 'Boolean' }
+    ]
+  },
+
+  // === Comparison ===
+  {
+    id: 'compare/Equal',
+    name: 'Equal',
+    category: 'Comparison',
+    pure: true,
+    description: 'Check if two values are equal',
+    pins: [
+      { name: 'a', direction: 'input', type: 'Real' },
+      { name: 'b', direction: 'input', type: 'Real' },
+      { name: 'result', direction: 'output', type: 'Boolean' }
+    ]
+  },
+  {
+    id: 'compare/Greater',
+    name: 'Greater Than',
+    category: 'Comparison',
+    pure: true,
+    description: 'Check if A is greater than B',
+    pins: [
+      { name: 'a', direction: 'input', type: 'Real' },
+      { name: 'b', direction: 'input', type: 'Real' },
+      { name: 'result', direction: 'output', type: 'Boolean' }
+    ]
+  },
+  {
+    id: 'compare/Less',
+    name: 'Less Than',
+    category: 'Comparison',
+    pure: true,
+    description: 'Check if A is less than B',
+    pins: [
+      { name: 'a', direction: 'input', type: 'Real' },
+      { name: 'b', direction: 'input', type: 'Real' },
+      { name: 'result', direction: 'output', type: 'Boolean' }
+    ]
+  },
+  {
+    id: 'compare/InRange',
+    name: 'In Range',
+    category: 'Comparison',
+    pure: true,
+    description: 'Check if value is within a range',
+    pins: [
+      { name: 'value', direction: 'input', type: 'Real' },
+      { name: 'min', direction: 'input', type: 'Real' },
+      { name: 'max', direction: 'input', type: 'Real' },
+      { name: 'result', direction: 'output', type: 'Boolean' }
+    ]
+  },
 
   // === Math ===
   {
-    id: 'neo/Add',
+    id: 'math/Add',
     name: 'Add',
     category: 'Math',
     pure: true,
@@ -118,7 +164,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Subtract',
+    id: 'math/Subtract',
     name: 'Subtract',
     category: 'Math',
     pure: true,
@@ -130,7 +176,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Multiply',
+    id: 'math/Multiply',
     name: 'Multiply',
     category: 'Math',
     pure: true,
@@ -142,7 +188,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Divide',
+    id: 'math/Divide',
     name: 'Divide',
     category: 'Math',
     pure: true,
@@ -154,7 +200,7 @@ const builtInNodes: NodeDef[] = [
     ]
   },
   {
-    id: 'neo/Clamp',
+    id: 'math/Clamp',
     name: 'Clamp',
     category: 'Math',
     pure: true,
@@ -166,68 +212,48 @@ const builtInNodes: NodeDef[] = [
       { name: 'result', direction: 'output', type: 'Real' }
     ]
   },
-
-  // === Variables ===
   {
-    id: 'neo/GetVariable',
-    name: 'Get Variable',
-    category: 'Variables',
+    id: 'math/Abs',
+    name: 'Absolute Value',
+    category: 'Math',
     pure: true,
-    description: 'Get a blueprint variable value',
-    pins: [{ name: 'value', direction: 'output', type: 'Any' }]
+    description: 'Get absolute value of a number',
+    pins: [
+      { name: 'value', direction: 'input', type: 'Real' },
+      { name: 'result', direction: 'output', type: 'Real' }
+    ]
+  },
+
+  // === Utility ===
+  {
+    id: 'utility/Print',
+    name: 'Print',
+    category: 'Utility',
+    description: 'Print a message to the log',
+    pins: [
+      { name: 'exec', direction: 'input', type: 'Exec' },
+      { name: 'message', direction: 'input', type: 'String' },
+      { name: 'then', direction: 'output', type: 'Exec' }
+    ]
   },
   {
-    id: 'neo/SetVariable',
+    id: 'utility/SetVariable',
     name: 'Set Variable',
-    category: 'Variables',
+    category: 'Utility',
     description: 'Set a blueprint variable value',
     pins: [
       { name: 'exec', direction: 'input', type: 'Exec' },
       { name: 'value', direction: 'input', type: 'Any' },
-      { name: 'exec', direction: 'output', type: 'Exec' },
-      { name: 'value', direction: 'output', type: 'Any' }
-    ]
-  },
-
-  // === Utilities ===
-  {
-    id: 'neo/Log',
-    name: 'Log',
-    category: 'Utilities',
-    description: 'Log a message',
-    pins: [
-      { name: 'exec', direction: 'input', type: 'Exec' },
-      { name: 'message', direction: 'input', type: 'String' },
-      { name: 'exec', direction: 'output', type: 'Exec' }
-    ]
-  },
-
-  // === Latent/Async ===
-  {
-    id: 'neo/WaitForEvent',
-    name: 'Wait For Event',
-    category: 'Async',
-    latent: true,
-    description: 'Wait until a specific event occurs',
-    pins: [
-      { name: 'exec', direction: 'input', type: 'Exec' },
-      { name: 'event_type', direction: 'input', type: 'String' },
-      { name: 'completed', direction: 'output', type: 'Exec' },
-      { name: 'event_data', direction: 'output', type: 'Any' }
+      { name: 'then', direction: 'output', type: 'Exec' }
     ]
   },
   {
-    id: 'neo/WaitForPointChange',
-    name: 'Wait For Point Change',
-    category: 'Async',
-    latent: true,
-    description: 'Wait until a point value changes',
-    pins: [
-      { name: 'exec', direction: 'input', type: 'Exec' },
-      { name: 'point_path', direction: 'input', type: 'String' },
-      { name: 'completed', direction: 'output', type: 'Exec' },
-      { name: 'new_value', direction: 'output', type: 'PointValue' }
-    ]
+    id: 'utility/GetVariable',
+    name: 'Get Variable',
+    category: 'Utility',
+    pure: true,
+    description: 'Get a blueprint variable value',
+    pins: [{ name: 'value', direction: 'output', type: 'Any' }]
   }
 ]
 

@@ -1,0 +1,8 @@
+[project]
+id = "neo-dev"
+name = "Neo Development"
+version = "1.0.0"
+description = "Development project for Neo building automation"
+
+[runtime]
+auto_start = true

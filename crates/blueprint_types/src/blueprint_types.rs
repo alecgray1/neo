@@ -8,14 +8,20 @@
 //! - `wasm` - Enable WASM bindings via wasm-bindgen
 
 mod behaviours;
+mod exposed;
 mod functions;
 mod structs;
+mod type_registry;
 mod types;
+mod value;
 
 #[cfg(feature = "wasm")]
 mod wasm;
 
 pub use behaviours::*;
+pub use exposed::*;
 pub use functions::*;
 pub use structs::*;
+pub use type_registry::*;
 pub use types::*;
+pub use value::*;

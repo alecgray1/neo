@@ -52,6 +52,12 @@ pub enum PinType {
     Array { element: Box<PinType> },
     /// User-defined struct type
     Struct { struct_id: String },
+    /// User-defined event type (from TypeRegistry)
+    Event { event_id: String },
+    /// User-defined object type (from TypeRegistry)
+    Object { object_id: String },
+    /// Opaque handle to a Rust object
+    Handle { target_type: String },
     /// Dynamic type (serde_json::Value) - accepts anything
     Any,
 }
@@ -79,6 +85,12 @@ impl PinType {
             }
             // Struct compatibility - must be same struct type
             (PinType::Struct { struct_id: a }, PinType::Struct { struct_id: b }) => a == b,
+            // Event compatibility - must be same event type
+            (PinType::Event { event_id: a }, PinType::Event { event_id: b }) => a == b,
+            // Object compatibility - must be same object type
+            (PinType::Object { object_id: a }, PinType::Object { object_id: b }) => a == b,
+            // Handle compatibility - must be same target type
+            (PinType::Handle { target_type: a }, PinType::Handle { target_type: b }) => a == b,
             _ => false,
         }
     }
@@ -91,6 +103,43 @@ impl PinType {
     /// Check if this is a data pin type
     pub fn is_data(&self) -> bool {
         !self.is_exec()
+    }
+
+    /// Get the user-defined type ID if this is a user-defined type
+    pub fn user_type_id(&self) -> Option<&str> {
+        match self {
+            PinType::Struct { struct_id } => Some(struct_id),
+            PinType::Event { event_id } => Some(event_id),
+            PinType::Object { object_id } => Some(object_id),
+            PinType::Handle { target_type } => Some(target_type),
+            _ => None,
+        }
+    }
+
+    /// Check if this is a user-defined type (struct, event, object, or handle)
+    pub fn is_user_defined(&self) -> bool {
+        self.user_type_id().is_some()
+    }
+
+    /// Create a new Event pin type
+    pub fn event(event_id: impl Into<String>) -> Self {
+        PinType::Event {
+            event_id: event_id.into(),
+        }
+    }
+
+    /// Create a new Object pin type
+    pub fn object(object_id: impl Into<String>) -> Self {
+        PinType::Object {
+            object_id: object_id.into(),
+        }
+    }
+
+    /// Create a new Handle pin type
+    pub fn handle(target_type: impl Into<String>) -> Self {
+        PinType::Handle {
+            target_type: target_type.into(),
+        }
     }
 }
 

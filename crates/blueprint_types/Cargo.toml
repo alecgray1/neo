@@ -12,6 +12,9 @@ doctest = false
 [dependencies]
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 
 [dependencies.wasm-bindgen]
 workspace = true

@@ -11,10 +11,11 @@
 
   interface Props {
     content: string
+    externalUpdateCounter?: number
     onchange?: (newContent: string) => void
   }
 
-  let { content, onchange }: Props = $props()
+  let { content, externalUpdateCounter = 0, onchange }: Props = $props()
 
   // Parse blueprint from content
   let blueprint: Blueprint | null = $derived.by(() => {
@@ -35,10 +36,22 @@
   let nodes = $state<Node<BlueprintNodeData>[]>([])
   let edges = $state<Edge[]>([])
 
-  // Initialize when blueprint changes
+  // Track which blueprint we've loaded and the last external update we processed
+  let loadedBlueprintId = $state<string | null>(null)
+  let lastProcessedExternalUpdate = $state(0)
+
+  // Reload when a DIFFERENT blueprint is loaded OR when external update occurs
   $effect(() => {
-    nodes = initialData.nodes
-    edges = initialData.edges
+    const currentId = blueprint?.id ?? null
+    const needsReload = currentId !== loadedBlueprintId || externalUpdateCounter > lastProcessedExternalUpdate
+
+    if (needsReload) {
+      console.log('Reloading blueprint:', currentId, 'externalUpdateCounter:', externalUpdateCounter, 'lastProcessed:', lastProcessedExternalUpdate)
+      nodes = initialData.nodes
+      edges = initialData.edges
+      loadedBlueprintId = currentId
+      lastProcessedExternalUpdate = externalUpdateCounter
+    }
   })
 
   // Custom node types
@@ -102,40 +115,21 @@
     notifyChange()
   }
 
-  // Handle node changes (position, selection, etc.)
-  function handleNodesChange(changes: any[]) {
-    // Apply changes to nodes
-    for (const change of changes) {
-      if (change.type === 'position' && change.position) {
-        const nodeIndex = nodes.findIndex((n) => n.id === change.id)
-        if (nodeIndex !== -1) {
-          nodes[nodeIndex] = {
-            ...nodes[nodeIndex],
-            position: change.position
-          }
-        }
-      } else if (change.type === 'remove') {
-        nodes = nodes.filter((n) => n.id !== change.id)
-        // Also remove connected edges
-        edges = edges.filter((e) => e.source !== change.id && e.target !== change.id)
-      }
-    }
+  // Handle node drag end - sync to server when drag completes
+  function handleNodeDragStop() {
+    console.log('Drag stop - nodes positions:', JSON.stringify(nodes.map(n => ({ id: n.id, x: n.position.x, y: n.position.y }))))
     notifyChange()
   }
 
-  // Handle edge changes
-  function handleEdgesChange(changes: any[]) {
-    for (const change of changes) {
-      if (change.type === 'remove') {
-        edges = edges.filter((e) => e.id !== change.id)
-      }
-    }
-    notifyChange()
-  }
 
   // Notify parent of changes
   function notifyChange() {
-    if (!onchange || !blueprint) return
+    if (!onchange || !blueprint) {
+      console.log('notifyChange: skipping - onchange:', !!onchange, 'blueprint:', !!blueprint)
+      return
+    }
+
+    console.log('notifyChange: current nodes:', nodes.map(n => ({ id: n.id, x: n.position.x, y: n.position.y })))
 
     const updatedBlueprint = flowToBlueprint(nodes, edges, {
       id: blueprint.id,
@@ -144,6 +138,8 @@
       description: blueprint.description,
       variables: blueprint.variables
     })
+
+    console.log('notifyChange: updatedBlueprint nodes:', updatedBlueprint.nodes.map(n => ({ id: n.id, x: n.position.x, y: n.position.y })))
 
     onchange(JSON.stringify(updatedBlueprint, null, 2))
   }
@@ -188,12 +184,11 @@
 <div class="blueprint-editor" oncontextmenu={handleContextMenu}>
   {#if blueprint}
     <SvelteFlow
-      {nodes}
-      {edges}
+      bind:nodes
+      bind:edges
       {nodeTypes}
-      onnodeschange={handleNodesChange}
-      onedgeschange={handleEdgesChange}
       onconnect={handleConnect}
+      onnodedragstop={handleNodeDragStop}
       isValidConnection={isValidConnection}
       onpaneclick={handlePaneClick}
       fitView

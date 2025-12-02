@@ -1,0 +1,101 @@
+{
+  "id": "temp-control",
+  "name": "Temperature Control",
+  "description": "Basic temperature control logic for VAV zones",
+  "nodes": [
+    {
+      "config": {},
+      "id": "event-tick",
+      "position": {
+        "x": 0,
+        "y": 140
+      },
+      "type": "event/OnTick"
+    },
+    {
+      "config": {
+        "variable": "zone_temp"
+      },
+      "id": "get-temp",
+      "position": {
+        "x": 300,
+        "y": 150
+      },
+      "type": "utility/GetVariable"
+    },
+    {
+      "config": {
+        "variable": "zone_setpoint"
+      },
+      "id": "get-setpoint",
+      "position": {
+        "x": 300,
+        "y": 250
+      },
+      "type": "utility/GetVariable"
+    },
+    {
+      "config": {},
+      "id": "compare",
+      "position": {
+        "x": 500,
+        "y": 200
+      },
+      "type": "compare/Greater"
+    },
+    {
+      "config": {},
+      "id": "branch",
+      "position": {
+        "x": 700,
+        "y": 200
+      },
+      "type": "flow/Branch"
+    },
+    {
+      "config": {},
+      "id": "print-cooling",
+      "position": {
+        "x": 900,
+        "y": 150
+      },
+      "type": "utility/Print"
+    },
+    {
+      "config": {},
+      "id": "print-heating",
+      "position": {
+        "x": 900,
+        "y": 250
+      },
+      "type": "utility/Print"
+    }
+  ],
+  "connections": [
+    {
+      "from": "event-tick.exec",
+      "to": "branch.exec"
+    },
+    {
+      "from": "get-temp.value",
+      "to": "compare.a"
+    },
+    {
+      "from": "get-setpoint.value",
+      "to": "compare.b"
+    },
+    {
+      "from": "compare.result",
+      "to": "branch.condition"
+    },
+    {
+      "from": "branch.true",
+      "to": "print-cooling.exec"
+    },
+    {
+      "from": "branch.false",
+      "to": "print-heating.exec"
+    }
+  ],
+  "metadata": null
+}

@@ -1,0 +1,36 @@
+[schedule]
+id = "hvac-schedule"
+name = "HVAC Operating Schedule"
+description = "Standard building operating schedule"
+timezone = "America/New_York"
+
+[default_schedule.monday]
+occupied = [
+    { start = "06:00", end = "18:00" }
+]
+
+[default_schedule.tuesday]
+occupied = [
+    { start = "06:00", end = "18:00" }
+]
+
+[default_schedule.wednesday]
+occupied = [
+    { start = "06:00", end = "18:00" }
+]
+
+[default_schedule.thursday]
+occupied = [
+    { start = "06:00", end = "18:00" }
+]
+
+[default_schedule.friday]
+occupied = [
+    { start = "06:00", end = "18:00" }
+]
+
+[default_schedule.saturday]
+occupied = []
+
+[default_schedule.sunday]
+occupied = []

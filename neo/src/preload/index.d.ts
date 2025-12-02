@@ -103,6 +103,55 @@ export interface WindowAPI {
   onMaximizedChange(callback: (maximized: boolean) => void): () => void
 }
 
+// Server connection types
+export interface ConnectionState {
+  state: 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
+  reconnectAttempts: number
+}
+
+export interface ServerConfig {
+  host: string
+  port: number
+}
+
+export interface ChangeEvent {
+  path: string
+  changeType: 'created' | 'updated' | 'deleted'
+  data: unknown
+}
+
+export interface ServerAPI {
+  // Connection management
+  connect(config?: Partial<ServerConfig>): Promise<boolean>
+  disconnect(): Promise<void>
+  getState(): Promise<ConnectionState>
+  getConfig(): Promise<ServerConfig>
+  setConfig(config: Partial<ServerConfig>): Promise<void>
+
+  // Request/response
+  request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T>
+
+  // Subscriptions
+  subscribe(paths: string[]): Promise<void>
+  unsubscribe(paths: string[]): Promise<void>
+  getSubscriptions(): Promise<string[]>
+
+  // Event listeners
+  onStateChanged(callback: (state: ConnectionState) => void): () => void
+  onChange(callback: (event: ChangeEvent) => void): () => void
+}
+
+// Project data types
+export interface ProjectAPI {
+  getProject(): Promise<unknown>
+  getDevices(): Promise<unknown[]>
+  getDevice(id: string): Promise<unknown>
+  getBlueprints(): Promise<unknown[]>
+  getBlueprint(id: string): Promise<unknown>
+  getSchedules(): Promise<unknown[]>
+  getSchedule(id: string): Promise<unknown>
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -110,5 +159,7 @@ declare global {
     themeAPI: ThemeAPI
     layoutAPI: LayoutAPI
     windowAPI: WindowAPI
+    serverAPI: ServerAPI
+    projectAPI: ProjectAPI
   }
 }
