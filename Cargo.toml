@@ -1,11 +1,11 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/neo",
-    "crates/blueprint_types",
-    "crates/blueprint_macros",
-    "crates/blueprint_runtime",
-    "crates/blueprint_server",
+  "crates/neo",
+  "crates/blueprint_types",
+  "crates/blueprint_macros",
+  "crates/blueprint_runtime",
+  "crates/blueprint_server",
 ]
 default-members = ["crates/neo"]
 
@@ -20,9 +20,6 @@ blueprint_macros = { path = "crates/blueprint_macros" }
 blueprint_runtime = { path = "crates/blueprint_runtime" }
 blueprint_server = { path = "crates/blueprint_server" }
 
-# Actor system
-kameo = "0.19.1"
-kameo_actors = "0.4.0"
 tokio = { version = "1.40", features = ["full"] }
 
 # Async utilities
@@ -49,7 +46,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Utilities
 thiserror = "1.0"
 anyhow = "1.0"
-notify = { version = "6.1", default-features = false, features = ["macos_kqueue"] }
+notify = { version = "6.1", default-features = false, features = [
+  "macos_kqueue",
+] }
 dashmap = "6.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
 wildmatch = "2.3"
