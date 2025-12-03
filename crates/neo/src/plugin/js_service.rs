@@ -1,7 +1,7 @@
-//! JavaScript plugin service using in-process thread-based runtime
+//! JavaScript Service
 //!
-//! Plugins run in dedicated threads using neo-js-runtime, providing
-//! better performance and simpler communication than process isolation.
+//! A service implemented in JavaScript, running in a dedicated thread
+//! using neo-js-runtime (Deno/V8).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -14,34 +14,44 @@ use blueprint_runtime::service::{
 };
 use neo_js_runtime::{spawn_runtime, RuntimeHandle, RuntimeServices};
 
-/// Configuration for a JavaScript plugin service
+/// Configuration for a JavaScript service
 #[derive(Debug, Clone)]
-pub struct JsPluginConfig {
-    /// Plugin ID
+pub struct JsServiceConfig {
+    /// Service ID
     pub id: String,
-    /// Plugin name
+    /// Service name
     pub name: String,
     /// JavaScript source code
     pub code: String,
+    /// Target service ID in the JS code (for 1:1 model)
+    /// If set, only this service's lifecycle methods are called
+    pub target_service_id: Option<String>,
     /// Event patterns to subscribe to
     pub subscriptions: Vec<String>,
     /// Optional tick interval
     pub tick_interval: Option<Duration>,
-    /// Plugin configuration data
+    /// Service configuration data
     pub config: serde_json::Value,
 }
 
-impl JsPluginConfig {
-    /// Create a new plugin config
+impl JsServiceConfig {
+    /// Create a new JS service config
     pub fn new(id: impl Into<String>, name: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
             code: code.into(),
+            target_service_id: None,
             subscriptions: Vec::new(),
             tick_interval: None,
             config: serde_json::Value::Object(Default::default()),
         }
+    }
+
+    /// Set the target service ID (for 1:1 model)
+    pub fn with_target_service_id(mut self, target_id: impl Into<String>) -> Self {
+        self.target_service_id = Some(target_id.into());
+        self
     }
 
     /// Add event subscriptions
@@ -56,36 +66,54 @@ impl JsPluginConfig {
         self
     }
 
-    /// Set plugin config
+    /// Set service config
     pub fn with_config(mut self, config: serde_json::Value) -> Self {
         self.config = config;
         self
     }
 }
 
-/// A JavaScript plugin service that runs in a dedicated thread
-pub struct JsPluginService {
-    config: JsPluginConfig,
+/// A service implemented in JavaScript
+///
+/// Each JsService runs in its own thread with its own V8 isolate.
+/// The JS code should export lifecycle callbacks (onStart, onStop, onTick, onEvent).
+pub struct JsService {
+    config: JsServiceConfig,
     runtime: Option<Arc<Mutex<RuntimeHandle>>>,
+    /// Pre-created runtime handle (used for first service after scan)
+    pre_created_handle: Option<RuntimeHandle>,
 }
 
-impl JsPluginService {
-    /// Create a new JavaScript plugin service
-    pub fn new(config: JsPluginConfig) -> Self {
+impl JsService {
+    /// Create a new JavaScript service
+    pub fn new(config: JsServiceConfig) -> Self {
         Self {
             config,
             runtime: None,
+            pre_created_handle: None,
         }
     }
 
-    /// Get the plugin ID
+    /// Create a JsService with an existing RuntimeHandle.
+    ///
+    /// This is used for the first service discovered during plugin scan,
+    /// where we reuse the runtime that was already created for scanning.
+    pub fn with_runtime(config: JsServiceConfig, handle: RuntimeHandle) -> Self {
+        Self {
+            config,
+            runtime: None,
+            pre_created_handle: Some(handle),
+        }
+    }
+
+    /// Get the service ID
     pub fn id(&self) -> &str {
         &self.config.id
     }
 }
 
 #[async_trait]
-impl Service for JsPluginService {
+impl Service for JsService {
     fn spec(&self) -> ServiceSpec {
         let mut spec = ServiceSpec::new(&self.config.id, &self.config.name)
             .with_subscriptions(self.config.subscriptions.clone());
@@ -97,68 +125,73 @@ impl Service for JsPluginService {
         spec
     }
 
-    async fn on_start(&mut self, ctx: &ServiceContext) -> ServiceResult<()> {
-        tracing::info!(plugin = %self.config.id, "Starting JavaScript plugin");
+    async fn on_start(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
+        tracing::info!(service = %self.config.id, "Starting JS service");
 
-        // Create runtime services (could inject event publisher, point store, etc.)
-        let services = RuntimeServices::default();
+        // Use pre-created handle if available, otherwise spawn new runtime
+        let handle = if let Some(h) = self.pre_created_handle.take() {
+            tracing::debug!(service = %self.config.id, "Using pre-created runtime handle");
+            h
+        } else {
+            tracing::debug!(service = %self.config.id, "Spawning new runtime");
+            // Create runtime services (could inject event publisher, point store, etc.)
+            let services = RuntimeServices::default();
 
-        // Spawn the JS runtime
-        let handle = spawn_runtime(
-            format!("plugin:{}", self.config.id),
-            self.config.code.clone(),
-            services,
-        )
-        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
+            // Spawn the JS runtime
+            spawn_runtime(
+                format!("js:{}", self.config.id),
+                self.config.code.clone(),
+                services,
+            )
+            .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?
+        };
+
+        // Start the JS service
+        let target_id = self.config.target_service_id.as_ref().ok_or_else(|| {
+            ServiceError::InitializationFailed("target_service_id is required".to_string())
+        })?;
+        handle
+            .start_service(target_id)
+            .await
+            .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
 
         self.runtime = Some(Arc::new(Mutex::new(handle)));
 
-        tracing::info!(plugin = %self.config.id, "JavaScript plugin started");
+        tracing::info!(service = %self.config.id, "JS service started");
         Ok(())
     }
 
     async fn on_stop(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-        tracing::info!(plugin = %self.config.id, "Stopping JavaScript plugin");
+        tracing::info!(service = %self.config.id, "Stopping JS service");
 
         if let Some(runtime) = self.runtime.take() {
             let handle = runtime.lock().await;
+
+            // Stop JS service gracefully
+            let stop_result = if let Some(ref target_id) = self.config.target_service_id {
+                handle.stop_service(target_id).await
+            } else {
+                Ok(()) // No target_service_id means nothing to stop
+            };
+
+            if let Err(e) = stop_result {
+                tracing::warn!(service = %self.config.id, error = %e, "Error stopping JS service");
+            }
+
             handle.terminate();
         }
 
-        tracing::info!(plugin = %self.config.id, "JavaScript plugin stopped");
+        tracing::info!(service = %self.config.id, "JS service stopped");
         Ok(())
     }
 
     async fn on_event(&mut self, _ctx: &ServiceContext, event: Event) -> ServiceResult<()> {
-        if let Some(ref runtime) = self.runtime {
-            let handle = runtime.lock().await;
-
-            // Call the plugin's onEvent handler if it exists
-            let event_json = serde_json::to_string(&serde_json::json!({
-                "type": event.event_type,
-                "source": event.source,
-                "data": event.data,
-                "timestamp": event.timestamp,
-            }))
-            .map_err(|e| ServiceError::EventError(e.to_string()))?;
-
-            // Execute __neo_internal.onEvent if registered
-            let script = format!(
-                r#"(async () => {{
-                    if (globalThis.__neo_internal && globalThis.__neo_internal.onEvent) {{
-                        await globalThis.__neo_internal.onEvent({});
-                    }}
-                }})()"#,
-                event_json
-            );
-
-            // We can't easily run arbitrary scripts through the handle,
-            // so for now we just log the event. Full event handling would
-            // require extending the runtime command protocol.
+        if let Some(ref _runtime) = self.runtime {
+            // TODO: Forward event to JS runtime
             tracing::debug!(
-                plugin = %self.config.id,
+                service = %self.config.id,
                 event_type = %event.event_type,
-                "Plugin received event (handler not yet implemented)"
+                "JS service received event (handler not yet implemented)"
             );
         }
 
@@ -169,8 +202,16 @@ impl Service for JsPluginService {
         if let Some(ref runtime) = self.runtime {
             let handle = runtime.lock().await;
 
-            // Similar to on_event, we'd need to extend the runtime to support tick callbacks
-            tracing::trace!(plugin = %self.config.id, "Plugin tick");
+            // Tick the target service
+            let tick_result = if let Some(ref target_id) = self.config.target_service_id {
+                handle.tick_service(target_id).await
+            } else {
+                Ok(()) // No target_service_id means nothing to tick
+            };
+
+            if let Err(e) = tick_result {
+                tracing::warn!(service = %self.config.id, error = %e, "Error during JS service tick");
+            }
         }
 
         Ok(())

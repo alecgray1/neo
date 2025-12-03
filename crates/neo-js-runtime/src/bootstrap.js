@@ -131,6 +131,88 @@ globalThis.Neo = {
  */
 globalThis.__neo_internal = {
   /**
+   * Start a specific service by ID.
+   * @param {string} id - The service ID
+   */
+  startService: async (id) => {
+    const service = serviceRegistry.get(id);
+    if (!service) {
+      throw new Error(`Service not found: ${id}`);
+    }
+    if (service.onStart) {
+      // Create service context with state
+      if (!service._state) {
+        service._state = {};
+      }
+      const ctx = { state: service._state };
+      await service.onStart(ctx);
+    }
+  },
+
+  /**
+   * Stop a specific service by ID.
+   * @param {string} id - The service ID
+   */
+  stopService: async (id) => {
+    const service = serviceRegistry.get(id);
+    if (!service) {
+      throw new Error(`Service not found: ${id}`);
+    }
+    if (service.onStop) {
+      const ctx = { state: service._state || {} };
+      await service.onStop(ctx);
+    }
+  },
+
+  /**
+   * Tick a specific service by ID.
+   * @param {string} id - The service ID
+   */
+  tickService: async (id) => {
+    const service = serviceRegistry.get(id);
+    if (!service) {
+      throw new Error(`Service not found: ${id}`);
+    }
+    if (service.onTick) {
+      const ctx = { state: service._state || {} };
+      await service.onTick(ctx);
+    }
+  },
+
+  /**
+   * Send an event to a specific service by ID.
+   * @param {string} id - The service ID
+   * @param {object} event - The event object
+   */
+  eventService: async (id, event) => {
+    const service = serviceRegistry.get(id);
+    if (!service) {
+      throw new Error(`Service not found: ${id}`);
+    }
+    if (service.onEvent) {
+      const ctx = { state: service._state || {} };
+      await service.onEvent(ctx, event);
+    }
+  },
+
+  /**
+   * Get list of registered services with their definitions.
+   * Called by Rust during scan phase to discover what services a plugin provides.
+   */
+  getServiceDefinitions: () => {
+    const defs = [];
+    for (const [id, def] of serviceRegistry) {
+      defs.push({
+        id: def.id,
+        name: def.name || def.id,
+        subscriptions: def.subscriptions || [],
+        tickInterval: def.tickInterval || null,
+      });
+    }
+    return defs;
+  },
+
+  /**
    * Execute a registered node.
    * Called by Rust via execute_node_in_js.
    *

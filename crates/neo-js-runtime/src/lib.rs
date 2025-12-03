@@ -15,10 +15,13 @@ mod ops;
 
 pub use ops::neo_runtime;
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::thread;
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
 
 use deno_core::v8;
 use deno_core::JsRuntime;
@@ -28,6 +31,37 @@ use tokio::sync::oneshot;
 
 /// Ensure V8 platform is initialized exactly once.
 static V8_INIT: Once = Once::new();
+
+/// Mutex to serialize V8 isolate creation.
+/// Creating multiple isolates concurrently can cause crashes in V8.
+static ISOLATE_CREATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Track code hashes that have been loaded to prevent loading the same code twice.
+/// Loading the same JS code into multiple V8 isolates causes segfaults.
+static LOADED_CODE_HASHES: std::sync::Mutex<Option<HashSet<u64>>> = std::sync::Mutex::new(None);
+
+/// Hash code content and check if it's already been loaded.
+/// Aborts the process if the same code is loaded twice.
+fn check_code_not_loaded(code: &str, runtime_name: &str) {
+    let mut hash = DefaultHasher::new();
+    code.hash(&mut hash);
+    let code_hash = hash.finish();
+
+    let mut guard = LOADED_CODE_HASHES.lock().unwrap();
+    let set = guard.get_or_insert_with(HashSet::new);
+
+    if !set.insert(code_hash) {
+        eprintln!(
+            "\n\x1b[31mFATAL ERROR:\x1b[0m Attempted to load the same JS code into multiple V8 runtimes.\n\
+            Runtime: '{}'\n\n\
+            This causes V8 segfaults. Each JS file can only be loaded once.\n\
+            If you have multiple services in one file, they must share a single runtime.\n\
+            Consider splitting services into separate files.\n",
+            runtime_name
+        );
+        std::process::exit(1);
+    }
+}
 
 /// Initialize the V8 platform. Call this before spawning any runtimes.
 /// Safe to call multiple times - will only initialize once.
@@ -44,18 +78,40 @@ struct ExecuteNodeRequest {
     response_tx: oneshot::Sender<Result<String, String>>,
 }
 
-/// Request to call a service lifecycle method.
+/// Request to call a service lifecycle method on a specific service.
 struct ServiceLifecycleRequest {
+    service_id: String,
     response_tx: oneshot::Sender<Result<(), String>>,
 }
 
 /// Messages sent to the runtime thread.
 enum RuntimeCommand {
     ExecuteNode(ExecuteNodeRequest),
-    StartServices(ServiceLifecycleRequest),
-    StopServices(ServiceLifecycleRequest),
-    Tick(ServiceLifecycleRequest),
+    StartService(ServiceLifecycleRequest),
+    StopService(ServiceLifecycleRequest),
+    TickService(ServiceLifecycleRequest),
     Shutdown,
+}
+
+/// A discovered service definition from scanning a plugin.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct DiscoveredService {
+    /// Service ID
+    pub id: String,
+    /// Service name
+    pub name: String,
+    /// Event subscriptions
+    pub subscriptions: Vec<String>,
+    /// Tick interval in milliseconds
+    #[serde(rename = "tickInterval")]
+    pub tick_interval: Option<u64>,
+}
+
+/// Result of scanning a plugin for registrations.
+#[derive(Debug, Clone)]
+pub struct ScanResult {
+    /// Discovered services
+    pub services: Vec<DiscoveredService>,
 }
 
 /// Handle to a spawned JavaScript runtime.
@@ -108,8 +164,8 @@ impl RuntimeHandle {
             .map_err(RuntimeError::JavaScript)
     }
 
-    /// Start all registered services (calls onStart on each).
-    pub async fn start_services(&self) -> Result<(), RuntimeError> {
+    /// Start a specific service by ID (calls onStart).
+    pub async fn start_service(&self, service_id: &str) -> Result<(), RuntimeError> {
         if self.terminated.load(Ordering::SeqCst) {
             return Err(RuntimeError::Terminated);
         }
@@ -117,7 +173,8 @@ impl RuntimeHandle {
         let (response_tx, response_rx) = oneshot::channel();
 
         self.cmd_tx
-            .send(RuntimeCommand::StartServices(ServiceLifecycleRequest {
+            .send(RuntimeCommand::StartService(ServiceLifecycleRequest {
+                service_id: service_id.to_string(),
                 response_tx,
             }))
             .map_err(|_| RuntimeError::ChannelClosed)?;
@@ -128,8 +185,8 @@ impl RuntimeHandle {
             .map_err(RuntimeError::JavaScript)
     }
 
-    /// Stop all registered services (calls onStop on each).
-    pub async fn stop_services(&self) -> Result<(), RuntimeError> {
+    /// Stop a specific service by ID (calls onStop).
+    pub async fn stop_service(&self, service_id: &str) -> Result<(), RuntimeError> {
         if self.terminated.load(Ordering::SeqCst) {
             return Err(RuntimeError::Terminated);
         }
@@ -137,7 +194,8 @@ impl RuntimeHandle {
         let (response_tx, response_rx) = oneshot::channel();
 
         self.cmd_tx
-            .send(RuntimeCommand::StopServices(ServiceLifecycleRequest {
+            .send(RuntimeCommand::StopService(ServiceLifecycleRequest {
+                service_id: service_id.to_string(),
                 response_tx,
             }))
             .map_err(|_| RuntimeError::ChannelClosed)?;
@@ -148,8 +206,8 @@ impl RuntimeHandle {
             .map_err(RuntimeError::JavaScript)
     }
 
-    /// Tick all registered services (calls onTick on each).
-    pub async fn tick(&self) -> Result<(), RuntimeError> {
+    /// Tick a specific service by ID (calls onTick).
+    pub async fn tick_service(&self, service_id: &str) -> Result<(), RuntimeError> {
         if self.terminated.load(Ordering::SeqCst) {
             return Err(RuntimeError::Terminated);
         }
@@ -157,7 +215,8 @@ impl RuntimeHandle {
         let (response_tx, response_rx) = oneshot::channel();
 
         self.cmd_tx
-            .send(RuntimeCommand::Tick(ServiceLifecycleRequest {
+            .send(RuntimeCommand::TickService(ServiceLifecycleRequest {
+                service_id: service_id.to_string(),
                 response_tx,
             }))
             .map_err(|_| RuntimeError::ChannelClosed)?;
@@ -314,7 +373,11 @@ pub fn spawn_runtime(
     code: String,
     services: RuntimeServices,
 ) -> Result<RuntimeHandle, RuntimeError> {
+    tracing::debug!("[spawn_runtime] Starting for {}", name);
     init_platform();
+
+    // Check that this code hasn't been loaded before (causes V8 segfault)
+    check_code_not_loaded(&code, &name);
 
     let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<RuntimeCommand>();
 
@@ -327,23 +390,37 @@ pub fn spawn_runtime(
     // Channel to receive ready signal
     let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
 
+    let name_clone = name.clone();
     let thread_handle = thread::Builder::new()
         .name(name.clone())
         .spawn(move || -> Result<(), RuntimeError> {
+            tracing::debug!("[spawn_runtime:{}] Thread started", name_clone);
+
             // Single-threaded tokio runtime for this thread
             let rt = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
                 .map_err(RuntimeError::SpawnFailed)?;
 
+            tracing::debug!("[spawn_runtime:{}] Tokio runtime created", name_clone);
+
             // LocalSet ensures no work-stealing - all tasks stay on this thread
             let local = tokio::task::LocalSet::new();
 
             local.block_on(&rt, async {
-                let mut js_runtime = JsRuntime::new(RuntimeOptions {
-                    extensions: vec![neo_runtime::init_ops_and_esm()],
-                    ..Default::default()
-                });
+                tracing::debug!("[spawn_runtime:{}] Creating JsRuntime, waiting for lock", name_clone);
+                // Serialize isolate creation to avoid V8 crashes from concurrent creation
+                let mut js_runtime = {
+                    let _lock = ISOLATE_CREATE_LOCK.lock().unwrap();
+                    tracing::debug!("[spawn_runtime:{}] Lock acquired, calling JsRuntime::new", name_clone);
+                    let rt = JsRuntime::new(RuntimeOptions {
+                        extensions: vec![neo_runtime::init_ops_and_esm()],
+                        ..Default::default()
+                    });
+                    tracing::debug!("[spawn_runtime:{}] JsRuntime::new complete, releasing lock", name_clone);
+                    rt
+                };
+                tracing::debug!("[spawn_runtime:{}] JsRuntime created", name_clone);
 
                 // Send isolate handle to host
                 let isolate_handle = js_runtime.v8_isolate().thread_safe_handle();
@@ -356,24 +433,31 @@ pub fn spawn_runtime(
                     state.put(services);
                 }
 
-                // Execute plugin code
-                if let Err(e) = js_runtime.execute_script("<plugin>", code) {
+                // Execute plugin code (use unique script name to avoid V8 caching issues)
+                let script_name: &'static str = Box::leak(format!("<plugin:{}>", name_clone).into_boxed_str());
+                tracing::debug!("[spawn_runtime:{}] Executing plugin code", name_clone);
+                if let Err(e) = js_runtime.execute_script(script_name, code) {
                     let _ = ready_tx.send(Err(e.to_string()));
                     return Err(RuntimeError::JavaScript(e.to_string()));
                 }
+                tracing::debug!("[spawn_runtime:{}] Plugin code executed", name_clone);
 
                 // Run initial event loop to let plugin register nodes
+                tracing::debug!("[spawn_runtime:{}] Running initial event loop", name_clone);
                 if let Err(e) = js_runtime.run_event_loop(Default::default()).await {
                     let _ = ready_tx.send(Err(e.to_string()));
                     return Err(RuntimeError::JavaScript(e.to_string()));
                 }
+                tracing::debug!("[spawn_runtime:{}] Initial event loop complete", name_clone);
 
                 // Signal ready
                 let _ = ready_tx.send(Ok(()));
+                tracing::debug!("[spawn_runtime:{}] Signaled ready, entering command loop", name_clone);
 
                 // Main command loop
                 loop {
                     if terminated_clone.load(Ordering::SeqCst) {
+                        tracing::debug!("[spawn_runtime:{}] Terminated flag set, breaking", name_clone);
                         break;
                     }
 
@@ -381,22 +465,28 @@ pub fn spawn_runtime(
                         cmd = cmd_rx.recv() => {
                             match cmd {
                                 Some(RuntimeCommand::ExecuteNode(req)) => {
+                                    tracing::debug!("[spawn_runtime:{}] ExecuteNode: {}", name_clone, req.node_id);
                                     let result = execute_node_in_js(&mut js_runtime, &req.node_id, &req.context_json).await;
                                     let _ = req.response_tx.send(result);
                                 }
-                                Some(RuntimeCommand::StartServices(req)) => {
-                                    let result = call_service_lifecycle(&mut js_runtime, "start").await;
+                                Some(RuntimeCommand::StartService(req)) => {
+                                    tracing::debug!("[spawn_runtime:{}] StartService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "start", &req.service_id).await;
+                                    tracing::debug!("[spawn_runtime:{}] StartService complete: {:?}", name_clone, result.is_ok());
                                     let _ = req.response_tx.send(result);
                                 }
-                                Some(RuntimeCommand::StopServices(req)) => {
-                                    let result = call_service_lifecycle(&mut js_runtime, "stop").await;
+                                Some(RuntimeCommand::StopService(req)) => {
+                                    tracing::debug!("[spawn_runtime:{}] StopService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "stop", &req.service_id).await;
                                     let _ = req.response_tx.send(result);
                                 }
-                                Some(RuntimeCommand::Tick(req)) => {
-                                    let result = call_service_lifecycle(&mut js_runtime, "tick").await;
+                                Some(RuntimeCommand::TickService(req)) => {
+                                    tracing::debug!("[spawn_runtime:{}] TickService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "tick", &req.service_id).await;
                                     let _ = req.response_tx.send(result);
                                 }
                                 Some(RuntimeCommand::Shutdown) | None => {
+                                    tracing::debug!("[spawn_runtime:{}] Shutdown command received", name_clone);
                                     break;
                                 }
                             }
@@ -411,6 +501,7 @@ pub fn spawn_runtime(
                     }
                 }
 
+                tracing::debug!("[spawn_runtime:{}] Command loop exited", name_clone);
                 Ok(())
             })
         })?;
@@ -480,37 +571,25 @@ async fn execute_node_in_js(
     }
 }
 
-/// Call a service lifecycle method (start, stop, or tick) on all registered services.
+/// Call a service lifecycle method on a specific service.
 async fn call_service_lifecycle(
     js_runtime: &mut JsRuntime,
     method: &str,
+    service_id: &str,
 ) -> Result<(), String> {
+    let js_method = match method {
+        "start" => "startService",
+        "stop" => "stopService",
+        "tick" => "tickService",
+        _ => return Err(format!("Unknown lifecycle method: {}", method)),
+    };
+
     let script = format!(
         r#"(async () => {{
-            const method = "{}";
-            const errors = [];
-
-            for (const [id, service] of Object.entries(Neo.services.getAll())) {{
-                try {{
-                    if (method === "start" && service.onStart) {{
-                        await service.onStart();
-                    }} else if (method === "stop" && service.onStop) {{
-                        await service.onStop();
-                    }} else if (method === "tick" && service.onTick) {{
-                        await service.onTick();
-                    }}
-                }} catch (err) {{
-                    const msg = `Service ${{id}} ${{method}} failed: ${{err.message}}`;
-                    Neo.log.error(msg);
-                    errors.push(msg);
-                }}
-            }}
-
-            if (errors.length > 0) {{
-                throw new Error(errors.join("; "));
-            }}
+            await globalThis.__neo_internal.{}({});
         }})()"#,
-        method
+        js_method,
+        serde_json::to_string(service_id).unwrap()
     );
 
     let result = js_runtime
@@ -535,6 +614,240 @@ async fn call_service_lifecycle(
     }
 
     Ok(())
+}
+
+/// Scan a plugin and spawn a runtime that's already initialized with the code.
+///
+/// This combines scanning and runtime creation into a single operation to avoid
+/// the V8 corruption that occurs when dropping and recreating runtimes.
+///
+/// Returns the scan result (discovered services) and a runtime handle that's
+/// ready to use for the first service.
+pub fn scan_and_spawn_runtime(
+    name: String,
+    code: String,
+    services: RuntimeServices,
+) -> Result<(ScanResult, RuntimeHandle), RuntimeError> {
+    tracing::debug!("[scan_and_spawn_runtime] Starting for {}", name);
+    init_platform();
+
+    // Check that this code hasn't been loaded before (causes V8 segfault)
+    check_code_not_loaded(&code, &name);
+
+    let (cmd_tx, mut cmd_rx) = mpsc::unbounded_channel::<RuntimeCommand>();
+
+    let terminated = Arc::new(AtomicBool::new(false));
+    let terminated_clone = terminated.clone();
+
+    // Channel to receive isolate handle from the spawned thread
+    let (isolate_tx, isolate_rx) = std::sync::mpsc::sync_channel::<v8::IsolateHandle>(1);
+
+    // Channel to receive scan results from the thread
+    let (scan_tx, scan_rx) = std::sync::mpsc::sync_channel::<Result<ScanResult, String>>(1);
+
+    // Channel to receive ready signal
+    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+
+    let name_clone = name.clone();
+    let thread_handle = thread::Builder::new()
+        .name(name.clone())
+        .spawn(move || -> Result<(), RuntimeError> {
+            tracing::debug!("[scan_and_spawn_runtime:{}] Thread started", name_clone);
+
+            // Single-threaded tokio runtime for this thread
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(RuntimeError::SpawnFailed)?;
+
+            tracing::debug!("[scan_and_spawn_runtime:{}] Tokio runtime created", name_clone);
+
+            // LocalSet ensures no work-stealing - all tasks stay on this thread
+            let local = tokio::task::LocalSet::new();
+
+            local.block_on(&rt, async {
+                tracing::debug!("[scan_and_spawn_runtime:{}] Creating JsRuntime", name_clone);
+
+                // Serialize isolate creation to avoid V8 crashes from concurrent creation
+                let mut js_runtime = {
+                    let _lock = ISOLATE_CREATE_LOCK.lock().unwrap();
+                    tracing::debug!("[scan_and_spawn_runtime:{}] Lock acquired, calling JsRuntime::new", name_clone);
+                    let rt = JsRuntime::new(RuntimeOptions {
+                        extensions: vec![neo_runtime::init_ops_and_esm()],
+                        ..Default::default()
+                    });
+                    tracing::debug!("[scan_and_spawn_runtime:{}] JsRuntime::new complete", name_clone);
+                    rt
+                };
+
+                // Send isolate handle to host
+                let isolate_handle = js_runtime.v8_isolate().thread_safe_handle();
+                let _ = isolate_tx.send(isolate_handle);
+
+                // Store services in OpState for ops to access
+                {
+                    let op_state = js_runtime.op_state();
+                    let mut state = op_state.borrow_mut();
+                    state.put(services);
+                }
+
+                // Execute plugin code (use unique script name to avoid V8 caching issues)
+                let script_name: &'static str = Box::leak(format!("<plugin:{}>", name_clone).into_boxed_str());
+                tracing::debug!("[scan_and_spawn_runtime:{}] Executing plugin code", name_clone);
+                if let Err(e) = js_runtime.execute_script(script_name, code) {
+                    let err_str = e.to_string();
+                    let _ = scan_tx.send(Err(err_str.clone()));
+                    let _ = ready_tx.send(Err(err_str.clone()));
+                    return Err(RuntimeError::JavaScript(err_str));
+                }
+
+                // Run event loop to let plugin register services
+                tracing::debug!("[scan_and_spawn_runtime:{}] Running event loop after plugin code", name_clone);
+                if let Err(e) = js_runtime.run_event_loop(Default::default()).await {
+                    let err_str = e.to_string();
+                    let _ = scan_tx.send(Err(err_str.clone()));
+                    let _ = ready_tx.send(Err(err_str.clone()));
+                    return Err(RuntimeError::JavaScript(err_str));
+                }
+
+                // ** SCAN STEP - happens INSIDE this thread **
+                tracing::debug!("[scan_and_spawn_runtime:{}] Performing scan", name_clone);
+                let scan_result = {
+                    let script = r#"JSON.stringify(globalThis.__neo_internal.getServiceDefinitions())"#;
+                    let result = match js_runtime.execute_script("<get_services>", script) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            let err_str = e.to_string();
+                            let _ = scan_tx.send(Err(err_str.clone()));
+                            let _ = ready_tx.send(Err(err_str.clone()));
+                            return Err(RuntimeError::JavaScript(err_str));
+                        }
+                    };
+
+                    // Run event loop to ensure script completes
+                    if let Err(e) = js_runtime.run_event_loop(Default::default()).await {
+                        let err_str = e.to_string();
+                        let _ = scan_tx.send(Err(err_str.clone()));
+                        let _ = ready_tx.send(Err(err_str.clone()));
+                        return Err(RuntimeError::JavaScript(err_str));
+                    }
+
+                    // Extract JSON string in a scope block so scope is dropped before we continue
+                    let json_str = {
+                        let scope = &mut js_runtime.handle_scope();
+                        let local = v8::Local::new(scope, result);
+                        local.to_rust_string_lossy(scope)
+                    }; // scope dropped here
+
+                    let services_vec: Vec<DiscoveredService> = match serde_json::from_str(&json_str) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            let err_str = format!("Failed to parse service definitions: {}", e);
+                            let _ = scan_tx.send(Err(err_str.clone()));
+                            let _ = ready_tx.send(Err(err_str.clone()));
+                            return Err(RuntimeError::JavaScript(err_str));
+                        }
+                    };
+
+                    ScanResult { services: services_vec }
+                };
+
+                tracing::debug!(
+                    "[scan_and_spawn_runtime:{}] Scan complete, found {} services",
+                    name_clone,
+                    scan_result.services.len()
+                );
+
+                // Send scan results back to main thread
+                let _ = scan_tx.send(Ok(scan_result));
+                let _ = ready_tx.send(Ok(()));
+
+                tracing::debug!("[scan_and_spawn_runtime:{}] Entering command loop", name_clone);
+
+                // Main command loop (same as spawn_runtime)
+                loop {
+                    if terminated_clone.load(Ordering::SeqCst) {
+                        tracing::debug!("[scan_and_spawn_runtime:{}] Terminated flag set, breaking", name_clone);
+                        break;
+                    }
+
+                    tokio::select! {
+                        cmd = cmd_rx.recv() => {
+                            match cmd {
+                                Some(RuntimeCommand::ExecuteNode(req)) => {
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] ExecuteNode: {}", name_clone, req.node_id);
+                                    let result = execute_node_in_js(&mut js_runtime, &req.node_id, &req.context_json).await;
+                                    let _ = req.response_tx.send(result);
+                                }
+                                Some(RuntimeCommand::StartService(req)) => {
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] StartService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "start", &req.service_id).await;
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] StartService complete: {:?}", name_clone, result.is_ok());
+                                    let _ = req.response_tx.send(result);
+                                }
+                                Some(RuntimeCommand::StopService(req)) => {
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] StopService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "stop", &req.service_id).await;
+                                    let _ = req.response_tx.send(result);
+                                }
+                                Some(RuntimeCommand::TickService(req)) => {
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] TickService: {}", name_clone, req.service_id);
+                                    let result = call_service_lifecycle(&mut js_runtime, "tick", &req.service_id).await;
+                                    let _ = req.response_tx.send(result);
+                                }
+                                Some(RuntimeCommand::Shutdown) | None => {
+                                    tracing::debug!("[scan_and_spawn_runtime:{}] Shutdown command received", name_clone);
+                                    break;
+                                }
+                            }
+                        }
+                        // Also poll the JS event loop for any pending async ops
+                        _ = js_runtime.run_event_loop(deno_core::PollEventLoopOptions {
+                            wait_for_inspector: false,
+                            pump_v8_message_loop: true,
+                        }) => {
+                            // Event loop tick complete
+                        }
+                    }
+                }
+
+                tracing::debug!("[scan_and_spawn_runtime:{}] Command loop exited", name_clone);
+                Ok(())
+            })
+        })?;
+
+    // Wait for isolate handle
+    let isolate_handle = isolate_rx
+        .recv()
+        .map_err(|_| RuntimeError::ChannelClosed)?;
+
+    // Wait for scan results
+    let scan_result = scan_rx
+        .recv()
+        .map_err(|_| RuntimeError::ChannelClosed)?
+        .map_err(RuntimeError::JavaScript)?;
+
+    // Wait for ready signal
+    ready_rx
+        .recv()
+        .map_err(|_| RuntimeError::ChannelClosed)?
+        .map_err(RuntimeError::JavaScript)?;
+
+    tracing::debug!(
+        "[scan_and_spawn_runtime] Complete for {}, discovered {} services",
+        name,
+        scan_result.services.len()
+    );
+
+    Ok((
+        scan_result,
+        RuntimeHandle {
+            cmd_tx,
+            terminated,
+            isolate_handle,
+            thread_handle: std::sync::Mutex::new(Some(thread_handle)),
+        },
+    ))
 }
 
 #[cfg(test)]

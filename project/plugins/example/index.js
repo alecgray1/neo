@@ -1,24 +1,48 @@
 // Example Neo Plugin
-// Demonstrates registering a service and blueprint nodes
+// Demonstrates registering services and blueprint nodes
 
-// Register a simple service
+// Service 1: A ticker that logs periodically
 Neo.services.register({
   id: "example/ticker",
-  name: "Example Ticker Service",
+  name: "Example Ticker",
+  tickInterval: 5000,
 
-  // Called when service starts
-  onStart: async () => {
-    Neo.log.info("Example ticker service started!");
+  onStart: async (ctx) => {
+    ctx.state.count = 0;
+    Neo.log.info("Ticker service started");
   },
 
-  // Called when service stops
-  onStop: async () => {
-    Neo.log.info("Example ticker service stopped");
+  onStop: async (ctx) => {
+    Neo.log.info("Ticker service stopped after " + ctx.state.count + " ticks");
   },
 
-  // Called on each tick (if tick_interval is set)
-  onTick: async () => {
-    Neo.log.debug("Tick!");
+  onTick: async (ctx) => {
+    ctx.state.count += 1;
+    Neo.log.debug("Tick #" + ctx.state.count);
+  },
+});
+
+// Service 2: A watchdog that monitors system health
+Neo.services.register({
+  id: "example/watchdog",
+  name: "System Watchdog",
+  tickInterval: 10000,
+
+  onStart: async (ctx) => {
+    ctx.state.startTime = Date.now();
+    ctx.state.checks = 0;
+    Neo.log.info("Watchdog service started");
+  },
+
+  onStop: async (ctx) => {
+    const uptime = Math.floor((Date.now() - ctx.state.startTime) / 1000);
+    Neo.log.info("Watchdog stopped - uptime: " + uptime + "s, checks: " + ctx.state.checks);
+  },
+
+  onTick: async (ctx) => {
+    ctx.state.checks += 1;
+    const uptime = Math.floor((Date.now() - ctx.state.startTime) / 1000);
+    Neo.log.debug("Watchdog check #" + ctx.state.checks + " - uptime: " + uptime + "s");
   },
 });
 
@@ -64,4 +88,4 @@ Neo.nodes.register({
   },
 });
 
-Neo.log.info("Example plugin loaded - registered 1 service and 2 nodes");
+Neo.log.info("Example plugin loaded - registered 2 services and 2 nodes");

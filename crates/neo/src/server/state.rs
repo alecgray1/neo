@@ -14,7 +14,7 @@ use blueprint_runtime::service::ServiceManager;
 use blueprint_types::TypeRegistry;
 
 use crate::project::{BlueprintConfig, Project};
-use crate::plugin::{JsPluginConfig, JsPluginService};
+use crate::plugin::{JsService, JsServiceConfig};
 
 use super::protocol::{PluginRegistration, ServerMessage};
 
@@ -306,7 +306,7 @@ impl AppState {
             .map_err(|e| format!("Failed to read plugin code: {}", e))?;
 
         // Create and spawn the plugin service
-        let mut config = JsPluginConfig::new(
+        let mut config = JsServiceConfig::new(
             &registration.id,
             &registration.name,
             code,
@@ -318,7 +318,7 @@ impl AppState {
             config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
         }
 
-        let service = JsPluginService::new(config);
+        let service = JsService::new(config);
 
         match self.inner.service_manager.spawn(service).await {
             Ok(handle) => {
@@ -361,7 +361,7 @@ impl AppState {
             .map_err(|e| format!("Failed to read plugin code: {}", e))?;
 
         // Restart with updated code
-        let mut config = JsPluginConfig::new(
+        let mut config = JsServiceConfig::new(
             &registration.id,
             &registration.name,
             code,
@@ -373,7 +373,7 @@ impl AppState {
             config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
         }
 
-        let service = JsPluginService::new(config);
+        let service = JsService::new(config);
 
         match self.inner.service_manager.spawn(service).await {
             Ok(handle) => {

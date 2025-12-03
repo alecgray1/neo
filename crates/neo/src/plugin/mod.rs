@@ -1,12 +1,8 @@
-//! JavaScript plugin system using in-process thread-based runtime
+//! JavaScript Services
 //!
-//! Plugins run in dedicated threads using neo-js-runtime. Each plugin
-//! gets its own V8 isolate running in a thread with a LocalSet (no work-stealing).
-//!
-//! Following Deno's pattern, crash recovery is not handled at the runtime level.
-//! If a plugin crashes, the error is propagated to the service manager which
-//! decides how to handle it (log, restart, alert, etc.).
+//! Services can be implemented in JavaScript using neo-js-runtime.
+//! Each JsService runs in its own thread with its own V8 isolate.
 
 mod js_service;
 
-pub use js_service::{JsPluginConfig, JsPluginService};
+pub use js_service::{JsService, JsServiceConfig};

@@ -1550,6 +1550,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "deno_core",
+ "futures",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
