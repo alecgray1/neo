@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use parking_lot::RwLock;
+use dashmap::DashMap;
 
 use blueprint_runtime::service::{
     Event, Service, ServiceContext, ServiceError, ServiceResult, ServiceSpec,
@@ -40,7 +40,7 @@ pub struct BlueprintExecutor {
     /// The node registry for looking up node executors
     registry: Arc<NodeRegistry>,
     /// Loaded blueprints
-    blueprints: Arc<RwLock<HashMap<String, BlueprintState>>>,
+    blueprints: Arc<DashMap<String, BlueprintState>>,
     /// Event patterns to listen for
     subscriptions: Vec<String>,
     /// Tick interval for periodic execution
@@ -54,7 +54,7 @@ impl BlueprintExecutor {
             id: id.into(),
             name: name.into(),
             registry,
-            blueprints: Arc::new(RwLock::new(HashMap::new())),
+            blueprints: Arc::new(DashMap::new()),
             subscriptions: vec![
                 "blueprint/*".to_string(),
                 "device/point/*".to_string(),
@@ -84,15 +84,14 @@ impl BlueprintExecutor {
             variables: HashMap::new(),
             active: false,
         };
-        self.blueprints.write().insert(id, state);
+        self.blueprints.insert(id, state);
     }
 
     /// Execute a specific blueprint by ID
     pub async fn execute_blueprint(&self, blueprint_id: &str, trigger: &str) -> ServiceResult<()> {
         // Clone the necessary data while holding the lock, then drop it before async calls
         let (blueprint, variables, entry_node_ids) = {
-            let blueprints = self.blueprints.read();
-            let state = blueprints.get(blueprint_id).ok_or_else(|| {
+            let state = self.blueprints.get(blueprint_id).ok_or_else(|| {
                 ServiceError::Internal(format!("Blueprint not found: {}", blueprint_id))
             })?;
 
@@ -123,7 +122,7 @@ impl BlueprintExecutor {
             }
 
             (state.blueprint.clone(), state.variables.clone(), entry_node_ids)
-        }; // Lock is dropped here
+        }; // DashMap guard is dropped here
 
         // Execute from each entry point
         for entry_node_id in entry_node_ids {
@@ -250,7 +249,7 @@ impl BlueprintExecutor {
 
     /// Get the number of loaded blueprints
     pub fn blueprint_count(&self) -> usize {
-        self.blueprints.read().len()
+        self.blueprints.len()
     }
 }
 
@@ -290,7 +289,7 @@ impl Service for BlueprintExecutor {
         );
 
         // Execute all blueprints that might be triggered by this event
-        let blueprint_ids: Vec<_> = self.blueprints.read().keys().cloned().collect();
+        let blueprint_ids: Vec<_> = self.blueprints.iter().map(|r| r.key().clone()).collect();
         for bp_id in blueprint_ids {
             if let Err(e) = self.execute_blueprint(&bp_id, &event.event_type).await {
                 tracing::warn!(
@@ -306,7 +305,7 @@ impl Service for BlueprintExecutor {
 
     async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
         // Execute blueprints that have tick-based entry points
-        let blueprint_ids: Vec<_> = self.blueprints.read().keys().cloned().collect();
+        let blueprint_ids: Vec<_> = self.blueprints.iter().map(|r| r.key().clone()).collect();
         for bp_id in blueprint_ids {
             if let Err(e) = self.execute_blueprint(&bp_id, "tick").await {
                 tracing::warn!(

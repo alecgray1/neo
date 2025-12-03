@@ -286,19 +286,21 @@ impl ProjectLoader {
         let content = fs::read_to_string(manifest_path).await?;
         let manifest: PluginManifest = serde_json::from_str(&content)?;
 
-        // Resolve the entry path relative to the manifest location
-        let manifest_dir = manifest_path.parent().unwrap_or(plugin_dir);
-        let entry_path = manifest_dir.join(&manifest.entry).canonicalize().map_err(|e| {
-            LoadError::ReadError(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Plugin entry file not found: {} ({})", manifest.entry, e),
-            ))
-        })?;
+        // The manifest_dir is where service/node entry paths are relative to
+        let manifest_dir = manifest_path.parent().unwrap_or(plugin_dir).to_path_buf();
+
+        // Log what we found
+        debug!(
+            "Loaded plugin manifest: {} ({} services, {} nodes)",
+            manifest.id,
+            manifest.services.len(),
+            manifest.nodes.len()
+        );
 
         Ok(LoadedPlugin {
             manifest,
             plugin_dir: plugin_dir.to_path_buf(),
-            entry_path,
+            manifest_dir,
         })
     }
 

@@ -1,0 +1,32 @@
+{
+  "id": "example",
+  "name": "Example Plugin",
+  "description": "Example plugin demonstrating services and nodes",
+  "services": [
+    {
+      "id": "example/watchdog",
+      "entry": "services/watchdog.js",
+      "tickInterval": 10000
+    },
+    {
+      "id": "example/ticker",
+      "entry": "services/ticker.js",
+      "tickInterval": 5000
+    },
+    {
+      "id": "example/crasher",
+      "entry": "services/crasher.js",
+      "tickInterval": 3000
+    }
+  ],
+  "nodes": [
+    {
+      "id": "example/delay",
+      "entry": "nodes/delay.js"
+    },
+    {
+      "id": "example/add",
+      "entry": "nodes/add.js"
+    }
+  ]
+}

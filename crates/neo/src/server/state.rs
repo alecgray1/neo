@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 use wildmatch::WildMatch;
@@ -38,10 +39,10 @@ struct AppStateInner {
     type_registry: Arc<TypeRegistry>,
 
     /// Connected clients
-    clients: RwLock<HashMap<Uuid, ClientState>>,
+    clients: DashMap<Uuid, ClientState>,
 
     /// Dev plugins registered via WebSocket (plugin_id -> registration)
-    dev_plugins: RwLock<HashMap<String, PluginRegistration>>,
+    dev_plugins: DashMap<String, PluginRegistration>,
 
     /// Broadcast channel for server-wide notifications
     broadcast_tx: broadcast::Sender<ServerMessage>,
@@ -71,8 +72,8 @@ impl AppState {
                 project_path: RwLock::new(None),
                 service_manager,
                 type_registry,
-                clients: RwLock::new(HashMap::new()),
-                dev_plugins: RwLock::new(HashMap::new()),
+                clients: DashMap::new(),
+                dev_plugins: DashMap::new(),
                 broadcast_tx,
             }),
         }
@@ -136,7 +137,7 @@ impl AppState {
             tx,
         };
 
-        self.inner.clients.write().await.insert(session_id, client);
+        self.inner.clients.insert(session_id, client);
         tracing::info!("Client connected: {}", session_id);
 
         session_id
@@ -144,14 +145,13 @@ impl AppState {
 
     /// Remove a client connection
     pub async fn remove_client(&self, session_id: Uuid) {
-        self.inner.clients.write().await.remove(&session_id);
+        self.inner.clients.remove(&session_id);
         tracing::info!("Client disconnected: {}", session_id);
     }
 
     /// Add subscriptions for a client
     pub async fn subscribe(&self, session_id: Uuid, paths: Vec<String>) {
-        let mut clients = self.inner.clients.write().await;
-        if let Some(client) = clients.get_mut(&session_id) {
+        if let Some(mut client) = self.inner.clients.get_mut(&session_id) {
             for path in paths {
                 tracing::debug!("Client {} subscribed to: {}", session_id, path);
                 client.subscriptions.insert(path);
@@ -161,8 +161,7 @@ impl AppState {
 
     /// Remove subscriptions for a client
     pub async fn unsubscribe(&self, session_id: Uuid, paths: Vec<String>) {
-        let mut clients = self.inner.clients.write().await;
-        if let Some(client) = clients.get_mut(&session_id) {
+        if let Some(mut client) = self.inner.clients.get_mut(&session_id) {
             for path in &paths {
                 client.subscriptions.remove(path);
             }
@@ -171,8 +170,7 @@ impl AppState {
 
     /// Get subscriptions for a client
     pub async fn get_subscriptions(&self, session_id: Uuid) -> HashSet<String> {
-        let clients = self.inner.clients.read().await;
-        clients
+        self.inner.clients
             .get(&session_id)
             .map(|c| c.subscriptions.clone())
             .unwrap_or_default()
@@ -180,11 +178,9 @@ impl AppState {
 
     /// Broadcast a message to all clients subscribed to a path
     pub async fn broadcast(&self, path: &str, message: ServerMessage) {
-        let clients = self.inner.clients.read().await;
+        tracing::info!("Broadcasting to path: {} ({} clients connected)", path, self.inner.clients.len());
 
-        tracing::info!("Broadcasting to path: {} ({} clients connected)", path, clients.len());
-
-        for client in clients.values() {
+        for client in self.inner.clients.iter() {
             let matches = Self::matches_any_subscription(&client.subscriptions, path);
             tracing::debug!(
                 "Client {} subscriptions: {:?}, matches {}: {}",
@@ -209,9 +205,7 @@ impl AppState {
 
     /// Broadcast a message to all connected clients
     pub async fn broadcast_all(&self, message: ServerMessage) {
-        let clients = self.inner.clients.read().await;
-
-        for client in clients.values() {
+        for client in self.inner.clients.iter() {
             if let Err(e) = client.tx.try_send(message.clone()) {
                 tracing::warn!(
                     "Failed to send message to client {}: {}",
@@ -282,13 +276,12 @@ impl AppState {
 
     /// Get the number of connected clients
     pub async fn client_count(&self) -> usize {
-        self.inner.clients.read().await.len()
+        self.inner.clients.len()
     }
 
     /// Send a message to a specific client
     pub async fn send_to_client(&self, session_id: Uuid, message: ServerMessage) {
-        let clients = self.inner.clients.read().await;
-        if let Some(client) = clients.get(&session_id) {
+        if let Some(client) = self.inner.clients.get(&session_id) {
             let _ = client.tx.try_send(message);
         }
     }
@@ -298,7 +291,7 @@ impl AppState {
         let plugin_id = registration.id.clone();
 
         // Store the registration
-        self.inner.dev_plugins.write().await.insert(plugin_id.clone(), registration.clone());
+        self.inner.dev_plugins.insert(plugin_id.clone(), registration.clone());
 
         // Read the plugin's JavaScript code
         let code = tokio::fs::read_to_string(&registration.entry_path)
@@ -331,7 +324,7 @@ impl AppState {
             }
             Err(e) => {
                 // Remove from dev_plugins on failure
-                self.inner.dev_plugins.write().await.remove(&plugin_id);
+                self.inner.dev_plugins.remove(&plugin_id);
                 Err(format!("Failed to start plugin: {}", e))
             }
         }
@@ -346,8 +339,7 @@ impl AppState {
 
         // Update the entry path in registration
         let registration = {
-            let mut plugins = self.inner.dev_plugins.write().await;
-            if let Some(reg) = plugins.get_mut(plugin_id) {
+            if let Some(mut reg) = self.inner.dev_plugins.get_mut(plugin_id) {
                 reg.entry_path = entry_path.to_string();
                 reg.clone()
             } else {

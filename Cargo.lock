@@ -398,6 +398,7 @@ dependencies = [
 name = "blueprint_types"
 version = "0.1.0"
 dependencies = [
+ "dashmap",
  "serde",
  "serde-wasm-bindgen",
  "serde_json",

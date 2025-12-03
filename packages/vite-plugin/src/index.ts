@@ -1,83 +1,47 @@
 import { Plugin, ResolvedConfig } from "vite";
-import { resolve, join } from "path";
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from "fs";
+import { resolve, join, basename, extname } from "path";
+import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync } from "fs";
+import { glob } from "glob";
 import WebSocket from "ws";
 
 /**
- * Build target for the plugin
+ * Service entry in the manifest
  */
-export type BuildTarget = "server" | "app";
-
-/**
- * Server-side plugin configuration (runs in Neo's deno_core runtime)
- */
-export interface ServerConfig {
-  /** Entry point relative to plugin root (default: src/server/index.ts) */
-  entry?: string;
-  /** Event subscriptions (glob patterns) */
-  subscriptions?: string[];
-  /** Tick interval in milliseconds */
+export interface ServiceEntry {
+  /** Full service ID: "plugin-id/service-name" */
+  id: string;
+  /** Path to the built chunk relative to dist */
+  entry: string;
+  /** Tick interval in milliseconds (extracted from defineService) */
   tickInterval?: number;
-  /** Plugin-specific configuration passed to onStart */
-  config?: Record<string, unknown>;
+  /** Event subscriptions (extracted from defineService) */
+  subscriptions?: string[];
 }
 
 /**
- * App-side plugin configuration (runs in Electron extension host)
+ * Node entry in the manifest
  */
-export interface AppConfig {
-  /** Entry point relative to plugin root (default: src/app/index.ts) */
-  entry?: string;
-  /** Activation events (e.g., 'onStartupFinished', 'onCommand:myCommand') */
-  activationEvents?: string[];
-  /** Contribution points */
-  contributes?: {
-    commands?: CommandContribution[];
-    viewsContainers?: {
-      activitybar?: ViewContainerContribution[];
-      panel?: ViewContainerContribution[];
-    };
-    views?: Record<string, ViewContribution[]>;
-    menus?: Record<string, MenuContribution[]>;
-    keybindings?: KeybindingContribution[];
-  };
-}
-
-export interface CommandContribution {
+export interface NodeEntry {
+  /** Full node ID: "plugin-id/node-name" */
   id: string;
-  title: string;
-  category?: string;
-  icon?: string;
-  enablement?: string;
+  /** Path to the built chunk relative to dist */
+  entry: string;
 }
 
-export interface ViewContainerContribution {
-  id: string;
-  title: string;
-  icon: string;
-}
-
-export interface ViewContribution {
+/**
+ * Neo plugin manifest (written to neo-plugin.json)
+ */
+export interface NeoPluginManifest {
   id: string;
   name: string;
-  type?: "tree" | "webview";
-  when?: string;
-  icon?: string;
+  description?: string;
+  services: ServiceEntry[];
+  nodes: NodeEntry[];
 }
 
-export interface MenuContribution {
-  command: string;
-  when?: string;
-  group?: string;
-}
-
-export interface KeybindingContribution {
-  command: string;
-  key: string;
-  mac?: string;
-  when?: string;
-}
-
+/**
+ * Plugin configuration
+ */
 export interface NeoPluginConfig {
   /** Unique plugin identifier */
   id: string;
@@ -85,110 +49,93 @@ export interface NeoPluginConfig {
   name: string;
   /** Description */
   description?: string;
-  /** Server-side configuration (optional) */
-  server?: ServerConfig;
-  /** App-side configuration (optional) */
-  app?: AppConfig;
   /** Neo dev server URL for hot reload (default: ws://localhost:9600/ws) */
   devServer?: string;
-  /** Electron extension dev server URL for app hot reload (default: ws://localhost:9601) */
-  electronDevServer?: string;
-
-  // Legacy fields for backwards compatibility
-  /** @deprecated Use server.subscriptions instead */
-  subscriptions?: string[];
-  /** @deprecated Use server.tickInterval instead */
-  tickInterval?: number;
-  /** @deprecated Use server.config instead */
-  config?: Record<string, unknown>;
 }
 
 /**
- * Unified plugin manifest (written to package.json neo field)
+ * Scan for service and node files in the plugin directory
  */
-interface NeoPluginManifest {
-  id: string;
-  name: string;
-  description?: string;
-  server?: {
-    entry: string;
-    subscriptions: string[];
-    tickInterval?: number;
-    config: Record<string, unknown>;
-  };
-  app?: {
-    entry: string;
-    activationEvents?: string[];
-    contributes?: AppConfig["contributes"];
-  };
-}
+async function scanPluginFiles(pluginDir: string): Promise<{
+  services: string[];
+  nodes: string[];
+}> {
+  const srcDir = join(pluginDir, "src");
 
-/**
- * Legacy manifest format for backwards compatibility
- */
-interface LegacyManifest {
-  id: string;
-  name: string;
-  description?: string;
-  entry: string;
-  subscriptions: string[];
-  tickInterval?: number;
-  config: Record<string, unknown>;
-}
+  // Find all service files
+  const servicePatterns = [
+    join(srcDir, "services", "*.ts"),
+    join(srcDir, "services", "*.js"),
+  ];
 
-/**
- * Detect which targets are available based on file structure
- */
-function detectBuildTargets(pluginDir: string, options: NeoPluginConfig): BuildTarget[] {
-  const targets: BuildTarget[] = [];
+  // Find all node files
+  const nodePatterns = [
+    join(srcDir, "nodes", "*.ts"),
+    join(srcDir, "nodes", "*.js"),
+  ];
 
-  // Check for server code
-  const serverEntry = options.server?.entry ?? "src/server/index.ts";
-  const legacyEntry = "src/index.ts";
+  const services: string[] = [];
+  const nodes: string[] = [];
 
-  if (existsSync(resolve(pluginDir, serverEntry))) {
-    targets.push("server");
-  } else if (existsSync(resolve(pluginDir, legacyEntry)) && !options.app) {
-    // Legacy mode: single entry point for server
-    targets.push("server");
+  for (const pattern of servicePatterns) {
+    const matches = await glob(pattern.replace(/\\/g, "/"));
+    services.push(...matches);
   }
 
-  // Check for app code
-  const appEntry = options.app?.entry ?? "src/app/index.ts";
-  if (existsSync(resolve(pluginDir, appEntry))) {
-    targets.push("app");
+  for (const pattern of nodePatterns) {
+    const matches = await glob(pattern.replace(/\\/g, "/"));
+    nodes.push(...matches);
   }
 
-  return targets;
+  return { services, nodes };
+}
+
+/**
+ * Extract config from a built service chunk
+ * Looks for tickInterval and subscriptions in the defineService call
+ */
+function extractServiceConfig(code: string): { tickInterval?: number; subscriptions?: string[] } {
+  const config: { tickInterval?: number; subscriptions?: string[] } = {};
+
+  // Match tickInterval: <number> - handles regular numbers, scientific notation (5e3), and underscores (5_000)
+  const tickMatch = code.match(/tickInterval\s*:\s*([\d._]+(?:e\d+)?)/i);
+  if (tickMatch) {
+    // Remove underscores and parse (handles 5_000, 5e3, etc.)
+    config.tickInterval = Number(tickMatch[1].replace(/_/g, ""));
+  }
+
+  // Match subscriptions: ["...", "..."]
+  const subsMatch = code.match(/subscriptions\s*:\s*\[([^\]]*)\]/);
+  if (subsMatch) {
+    const subsContent = subsMatch[1];
+    const strings = subsContent.match(/"([^"]+)"|'([^']+)'/g);
+    if (strings) {
+      config.subscriptions = strings.map(s => s.slice(1, -1));
+    }
+  }
+
+  return config;
 }
 
 /**
  * Create a Vite plugin for Neo plugin development
+ *
+ * This plugin:
+ * 1. Scans src/services/*.ts and src/nodes/*.ts for service/node definitions
+ * 2. Builds each as a separate chunk (one service/node per file)
+ * 3. Generates a manifest (neo-plugin.json) with all entries
+ * 4. Supports hot reload via WebSocket to Neo dev server
  */
 export function neo(options: NeoPluginConfig): Plugin {
   let resolvedConfig: ResolvedConfig;
   let ws: WebSocket | null = null;
-  let electronWs: WebSocket | null = null;
   let isDevMode = false;
-  let outputPath = "";
   let pluginDir = "";
-  let buildTarget: BuildTarget = "server"; // Default to server for legacy compatibility
+  let serviceFiles: string[] = [];
+  let nodeFiles: string[] = [];
 
   const devServerUrl = options.devServer ?? "ws://localhost:9600/ws";
-  const electronDevServerUrl = options.electronDevServer ?? "ws://localhost:9601";
   let isRegistered = false;
-
-  // Normalize legacy options to new format
-  const normalizedOptions: NeoPluginConfig = {
-    ...options,
-    server: options.server ?? (options.subscriptions || options.tickInterval || options.config
-      ? {
-          subscriptions: options.subscriptions,
-          tickInterval: options.tickInterval,
-          config: options.config,
-        }
-      : undefined),
-  };
 
   const connectToNeo = () => {
     if (ws) return;
@@ -229,27 +176,7 @@ export function neo(options: NeoPluginConfig): Plugin {
     });
   };
 
-  const registerPlugin = () => {
-    if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-    const serverConfig = normalizedOptions.server;
-    const msg = {
-      type: "plugin:register",
-      plugin: {
-        id: options.id,
-        name: options.name,
-        description: options.description,
-        entryPath: outputPath,
-        subscriptions: serverConfig?.subscriptions ?? [],
-        tickInterval: serverConfig?.tickInterval,
-        config: serverConfig?.config ?? {},
-      },
-    };
-
-    ws.send(JSON.stringify(msg));
-  };
-
-  const notifyRebuilt = () => {
+  const notifyRebuilt = (manifest: NeoPluginManifest) => {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       connectToNeo();
       return;
@@ -258,219 +185,67 @@ export function neo(options: NeoPluginConfig): Plugin {
     const msg = {
       type: "plugin:rebuilt",
       pluginId: options.id,
-      entryPath: outputPath,
+      manifest,
     };
 
     ws.send(JSON.stringify(msg));
     console.log(`[neo] Notified Neo of rebuild`);
   };
 
-  /**
-   * Connect to Electron's extension dev server (for app builds hot reload)
-   */
-  const connectToElectron = () => {
-    if (electronWs) return;
-
-    electronWs = new WebSocket(electronDevServerUrl);
-
-    electronWs.on("open", () => {
-      console.log(`[neo] Connected to Electron extension dev server`);
-    });
-
-    electronWs.on("error", (err) => {
-      if ((err as NodeJS.ErrnoException).code === "ECONNREFUSED") {
-        console.log(`[neo] Electron dev server not running (dev mode not enabled?), will retry on rebuild...`);
-      } else {
-        console.error(`[neo] Electron WebSocket error:`, err.message);
-      }
-      electronWs = null;
-    });
-
-    electronWs.on("close", () => {
-      console.log(`[neo] Disconnected from Electron dev server`);
-      electronWs = null;
-    });
-
-    electronWs.on("message", (data) => {
-      try {
-        const msg = JSON.parse(data.toString());
-        if (msg.type === "pong") {
-          // Heartbeat response
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    });
-  };
-
-  /**
-   * Notify Electron dev server to reload the extension
-   */
-  const notifyElectronReload = () => {
-    if (!electronWs || electronWs.readyState !== WebSocket.OPEN) {
-      connectToElectron();
-      // Retry after connection established
-      setTimeout(() => {
-        if (electronWs && electronWs.readyState === WebSocket.OPEN) {
-          notifyElectronReload();
-        }
-      }, 500);
-      return;
-    }
-
-    const msg = {
-      type: "extension:reload",
-      extensionId: options.id,
-    };
-
-    electronWs.send(JSON.stringify(msg));
-    console.log(`[neo] Notified Electron to reload extension: ${options.id}`);
-  };
-
-  /**
-   * Write the unified manifest (package.json with neo field)
-   */
-  const writeManifest = (outDir: string, target: BuildTarget) => {
-    // For the new unified format, we update package.json with neo field
-    const packageJsonPath = join(pluginDir, "package.json");
-    let packageJson: Record<string, unknown> = {};
-
-    try {
-      const content = readFileSync(packageJsonPath, "utf-8");
-      packageJson = JSON.parse(content);
-    } catch {
-      // No package.json, create minimal one
-      packageJson = {
-        name: options.id,
-        version: "0.1.0",
-      };
-    }
-
-    // Build the neo manifest section
-    const neoManifest: NeoPluginManifest = {
-      id: options.id,
-      name: options.name,
-      description: options.description,
-    };
-
-    // Add server config if building server target
-    if (target === "server" || normalizedOptions.server) {
-      neoManifest.server = {
-        entry: `dist/server/index.js`,
-        subscriptions: normalizedOptions.server?.subscriptions ?? [],
-        tickInterval: normalizedOptions.server?.tickInterval,
-        config: normalizedOptions.server?.config ?? {},
-      };
-    }
-
-    // Add app config if configured
-    if (options.app) {
-      neoManifest.app = {
-        entry: `dist/app/index.js`,
-        activationEvents: options.app.activationEvents,
-        contributes: options.app.contributes,
-      };
-    }
-
-    // Update package.json with neo field
-    packageJson.neo = neoManifest;
-
-    writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-    console.log(`[neo] Updated package.json with neo manifest`);
-
-    // Also write legacy neo-plugin.json for backwards compatibility
-    if (target === "server") {
-      const legacyManifest: LegacyManifest = {
-        id: options.id,
-        name: options.name,
-        description: options.description,
-        entry: "index.js",
-        subscriptions: normalizedOptions.server?.subscriptions ?? [],
-        tickInterval: normalizedOptions.server?.tickInterval,
-        config: normalizedOptions.server?.config ?? {},
-      };
-
-      const manifestPath = join(outDir, "neo-plugin.json");
-      writeFileSync(manifestPath, JSON.stringify(legacyManifest, null, 2));
-      console.log(`[neo] Wrote legacy manifest: ${manifestPath}`);
-    }
-  };
-
   return {
     name: "neo-plugin",
 
-    config(config, { command }) {
+    async config(config, { command }) {
       isDevMode = command === "serve" || process.argv.includes("--watch");
       pluginDir = process.cwd();
 
-      // Determine build target from env or auto-detect
-      const envTarget = process.env.NEO_BUILD_TARGET as BuildTarget | undefined;
-      const availableTargets = detectBuildTargets(pluginDir, options);
+      // Scan for service and node files
+      const files = await scanPluginFiles(pluginDir);
+      serviceFiles = files.services;
+      nodeFiles = files.nodes;
 
-      if (envTarget && availableTargets.includes(envTarget)) {
-        buildTarget = envTarget;
-      } else if (availableTargets.length > 0) {
-        // Default to first available target (server has priority for legacy compatibility)
-        buildTarget = availableTargets.includes("server") ? "server" : availableTargets[0];
+      console.log(`[neo] Building plugin: ${options.id}`);
+      console.log(`[neo] Found ${serviceFiles.length} services, ${nodeFiles.length} nodes`);
+
+      // Build input entries for each service and node
+      const input: Record<string, string> = {};
+
+      for (const file of serviceFiles) {
+        const name = basename(file, extname(file));
+        input[`services/${name}`] = file;
       }
 
-      console.log(`[neo] Building ${buildTarget} target for plugin: ${options.id}`);
-
-      // Determine entry point based on target
-      let entryPath: string;
-      if (buildTarget === "app") {
-        entryPath = options.app?.entry ?? "src/app/index.ts";
-      } else {
-        // Server target
-        entryPath = normalizedOptions.server?.entry ?? "src/server/index.ts";
-        // Fall back to legacy entry if new structure doesn't exist
-        if (!existsSync(resolve(pluginDir, entryPath))) {
-          entryPath = "src/index.ts";
-        }
+      for (const file of nodeFiles) {
+        const name = basename(file, extname(file));
+        input[`nodes/${name}`] = file;
       }
 
-      // Determine output path
-      const neoProject = process.env.NEO_PROJECT;
-      let outDir: string;
-
-      if (!isDevMode && neoProject) {
-        // Production build: output to Neo project
-        if (buildTarget === "app") {
-          // App code goes to extensions directory
-          outDir = join(neoProject, "extensions", options.id, "dist", "app");
-        } else {
-          // Server code goes to plugins directory
-          outDir = join(neoProject, "plugins", options.id, "dist");
-        }
-        mkdirSync(outDir, { recursive: true });
-      } else {
-        // Dev build: output locally with target subdirectory
-        outDir = buildTarget === "app" ? "dist/app" : "dist/server";
-
-        // For legacy plugins without the new structure, use just "dist"
-        if (buildTarget === "server" && !existsSync(resolve(pluginDir, "src/server"))) {
-          outDir = "dist";
+      // If no services or nodes found, check for legacy single entry
+      if (Object.keys(input).length === 0) {
+        const legacyEntry = join(pluginDir, "src", "index.ts");
+        if (existsSync(legacyEntry)) {
+          console.log(`[neo] Warning: Using legacy single-file mode. Consider migrating to src/services/*.ts`);
+          input["index"] = legacyEntry;
         }
       }
-
-      outputPath = resolve(pluginDir, outDir, "index.js");
 
       return {
         build: {
-          lib: {
-            entry: resolve(pluginDir, entryPath),
-            formats: ["es"] as const,
-            fileName: () => "index.js",
-          },
-          minify: isDevMode ? false : "esbuild",
-          outDir,
+          outDir: "dist",
           emptyOutDir: true,
+          minify: isDevMode ? false : "esbuild",
           rollupOptions: {
+            input,
             output: {
-              inlineDynamicImports: true,
+              dir: "dist",
+              format: "es",
+              entryFileNames: "[name].js",
+              chunkFileNames: "chunks/[name]-[hash].js",
+              // Don't inline dynamic imports - we want separate chunks
+              inlineDynamicImports: false,
             },
-            // For app builds, externalize neo extension API
-            external: buildTarget === "app" ? [/^@anthropic\/neo-extension-api/] : [],
+            // Don't externalize anything - each chunk should be self-contained
+            external: [],
           },
         },
       };
@@ -481,84 +256,84 @@ export function neo(options: NeoPluginConfig): Plugin {
     },
 
     buildStart() {
-      // Connect to appropriate dev server based on build target
       if (isDevMode) {
-        if (buildTarget === "server") {
-          connectToNeo();
-        } else if (buildTarget === "app") {
-          connectToElectron();
-        }
+        connectToNeo();
       }
     },
 
-    writeBundle() {
-      const outDir = resolvedConfig.build.outDir;
+    async writeBundle(outputOptions, bundle) {
+      const outDir = resolve(pluginDir, "dist");
+
+      // Build the manifest
+      const manifest: NeoPluginManifest = {
+        id: options.id,
+        name: options.name,
+        description: options.description,
+        services: [],
+        nodes: [],
+      };
+
+      // Process each output chunk
+      for (const [fileName, chunk] of Object.entries(bundle)) {
+        if (chunk.type !== "chunk" || !chunk.isEntry) continue;
+
+        const name = basename(fileName, ".js");
+        const dir = fileName.split("/")[0];
+
+        if (dir === "services") {
+          // Extract config from the built code
+          const code = chunk.code;
+          const config = extractServiceConfig(code);
+
+          manifest.services.push({
+            id: `${options.id}/${name}`,
+            entry: fileName,
+            tickInterval: config.tickInterval,
+            subscriptions: config.subscriptions,
+          });
+        } else if (dir === "nodes") {
+          manifest.nodes.push({
+            id: `${options.id}/${name}`,
+            entry: fileName,
+          });
+        }
+      }
 
       // Write manifest
-      writeManifest(resolve(pluginDir, outDir), buildTarget);
+      const manifestPath = join(outDir, "neo-plugin.json");
+      writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+      console.log(`[neo] Wrote manifest: ${manifestPath}`);
+      console.log(`[neo]   - ${manifest.services.length} services`);
+      console.log(`[neo]   - ${manifest.nodes.length} nodes`);
 
-      // Notify appropriate dev server based on build target
-      if (isDevMode) {
-        if (buildTarget === "server") {
-          if (!ws) {
-            connectToNeo();
-          }
-
-          setTimeout(() => {
-            if (!isRegistered) {
-              registerPlugin();
-            } else {
-              notifyRebuilt();
-            }
-          }, 100);
-        } else if (buildTarget === "app") {
-          // Notify Electron to reload the extension
-          setTimeout(() => {
-            notifyElectronReload();
-          }, 100);
+      // Also update package.json with neo field
+      const packageJsonPath = join(pluginDir, "package.json");
+      try {
+        let packageJson: Record<string, unknown> = {};
+        if (existsSync(packageJsonPath)) {
+          packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8"));
         }
+        packageJson.neo = manifest;
+        writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
+      } catch (e) {
+        console.warn(`[neo] Failed to update package.json:`, e);
+      }
+
+      // Notify Neo dev server
+      if (isDevMode) {
+        setTimeout(() => {
+          notifyRebuilt(manifest);
+        }, 100);
       }
     },
 
     closeBundle() {
-      if (!isDevMode) {
-        if (ws) {
-          ws.close();
-          ws = null;
-        }
-        if (electronWs) {
-          electronWs.close();
-          electronWs = null;
-        }
+      if (!isDevMode && ws) {
+        ws.close();
+        ws = null;
       }
     },
   };
-}
-
-/**
- * Create plugins for building both server and app targets
- * Use this when you want to build both in a single vite config
- */
-export function neoDual(options: NeoPluginConfig): Plugin[] {
-  const plugins: Plugin[] = [];
-
-  // Create server plugin if server config exists
-  if (options.server || options.subscriptions) {
-    plugins.push({
-      ...neo({ ...options, app: undefined }),
-      name: "neo-plugin-server",
-    });
-  }
-
-  // Create app plugin if app config exists
-  if (options.app) {
-    plugins.push({
-      ...neo({ ...options, server: undefined }),
-      name: "neo-plugin-app",
-    });
-  }
-
-  return plugins;
 }
 
 export default neo;

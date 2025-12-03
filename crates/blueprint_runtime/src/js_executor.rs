@@ -1,55 +1,50 @@
 //! JavaScript Node Executor
 //!
 //! Executes plugin-defined blueprint nodes using the neo-js-runtime.
-//! Plugin nodes are defined in JavaScript using Neo.nodes.register().
+//! Each node runs in its own V8 runtime with `export default defineNode({...})`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use neo_js_runtime::{spawn_runtime, RuntimeHandle, RuntimeServices};
-use tokio::sync::Mutex;
 
 use crate::executor::{NodeContext, NodeOutput};
 use crate::registry::NodeExecutor;
 
-/// A JavaScript runtime that can execute plugin nodes.
+/// A JavaScript runtime for a single node type.
 ///
-/// One PluginRuntime is created per plugin bundle. It loads the plugin's
-/// JavaScript code and can execute any nodes that plugin registers.
-pub struct PluginRuntime {
+/// Each PluginNodeRuntime runs one node definition in its own V8 isolate.
+/// The node code should use `export default defineNode({...})`.
+pub struct PluginNodeRuntime {
     /// The runtime handle for communicating with the JS thread
-    handle: RuntimeHandle,
-    /// Plugin ID (e.g., "myPlugin")
-    plugin_id: String,
+    handle: Arc<RuntimeHandle>,
+    /// The node ID (e.g., "example/add")
+    node_id: String,
 }
 
-impl PluginRuntime {
-    /// Create a new plugin runtime by loading the plugin code.
+impl PluginNodeRuntime {
+    /// Create a new plugin node runtime by loading the node code.
     ///
-    /// The code should register nodes using Neo.nodes.register().
-    pub fn new(plugin_id: &str, plugin_code: &str) -> Result<Self, PluginRuntimeError> {
+    /// The code should use `export default defineNode({...})`.
+    /// The node_id is assigned to the loaded definition.
+    pub fn new(node_id: &str, node_code: &str) -> Result<Self, PluginRuntimeError> {
         let handle = spawn_runtime(
-            format!("plugin:{}", plugin_id),
-            plugin_code.to_string(),
+            format!("node:{}", node_id),
+            node_code.to_string(),
+            node_id.to_string(),
             RuntimeServices::default(),
         )
         .map_err(|e| PluginRuntimeError::SpawnFailed(e.to_string()))?;
 
         Ok(Self {
-            handle,
-            plugin_id: plugin_id.to_string(),
+            handle: Arc::new(handle),
+            node_id: node_id.to_string(),
         })
     }
 
-    /// Execute a node that was registered by this plugin.
-    ///
-    /// The node_id should be the full node ID (e.g., "myPlugin/HttpGet").
-    pub async fn execute_node(
-        &self,
-        node_id: &str,
-        ctx: &NodeContext,
-    ) -> Result<NodeOutput, PluginRuntimeError> {
+    /// Execute the node with the given context.
+    pub async fn execute(&self, ctx: &NodeContext) -> Result<NodeOutput, PluginRuntimeError> {
         if self.handle.is_terminated() {
             return Err(PluginRuntimeError::RuntimeTerminated);
         }
@@ -66,11 +61,14 @@ impl PluginRuntime {
             .map_err(|e| PluginRuntimeError::SerializationError(e.to_string()))?;
 
         // Execute the node via the runtime handle
-        let result_json = self
-            .handle
-            .execute_node(node_id, &context_str)
-            .await
-            .map_err(|e| PluginRuntimeError::ExecutionError(e.to_string()))?;
+        // Use spawn_blocking since execute_node is now synchronous
+        let handle_clone = self.handle.clone();
+        let result_json = tokio::task::spawn_blocking(move || {
+            handle_clone.execute_node(&context_str)
+        })
+        .await
+        .map_err(|e| PluginRuntimeError::ExecutionError(e.to_string()))?
+        .map_err(|e| PluginRuntimeError::ExecutionError(e.to_string()))?;
 
         // Parse the result
         let result: serde_json::Value = serde_json::from_str(&result_json)
@@ -90,9 +88,9 @@ impl PluginRuntime {
         Ok(NodeOutput::pure(values))
     }
 
-    /// Get the plugin ID
-    pub fn plugin_id(&self) -> &str {
-        &self.plugin_id
+    /// Get the node ID
+    pub fn node_id(&self) -> &str {
+        &self.node_id
     }
 
     /// Terminate the runtime
@@ -101,7 +99,7 @@ impl PluginRuntime {
     }
 }
 
-impl Drop for PluginRuntime {
+impl Drop for PluginNodeRuntime {
     fn drop(&mut self) {
         self.terminate();
     }
@@ -124,34 +122,36 @@ pub enum PluginRuntimeError {
 
 /// Node executor that runs JavaScript plugin nodes.
 ///
-/// This wraps a PluginRuntime and implements NodeExecutor so it can
+/// This wraps a PluginNodeRuntime and implements NodeExecutor so it can
 /// be registered in the NodeRegistry like any other node.
 pub struct JsNodeExecutor {
-    /// The plugin runtime (shared across all nodes from this plugin)
-    runtime: Arc<Mutex<PluginRuntime>>,
-    /// The specific node ID this executor handles
-    node_id: String,
+    /// The node runtime
+    runtime: Arc<PluginNodeRuntime>,
 }
 
 impl JsNodeExecutor {
     /// Create a new JS node executor.
-    ///
-    /// The runtime is shared across all nodes from the same plugin.
-    pub fn new(runtime: Arc<Mutex<PluginRuntime>>, node_id: String) -> Self {
-        Self { runtime, node_id }
+    pub fn new(runtime: Arc<PluginNodeRuntime>) -> Self {
+        Self { runtime }
+    }
+
+    /// Create a new JS node executor from code.
+    pub fn from_code(node_id: &str, code: &str) -> Result<Self, PluginRuntimeError> {
+        let runtime = PluginNodeRuntime::new(node_id, code)?;
+        Ok(Self {
+            runtime: Arc::new(runtime),
+        })
     }
 }
 
 #[async_trait]
 impl NodeExecutor for JsNodeExecutor {
     async fn execute(&self, ctx: &mut NodeContext) -> NodeOutput {
-        let runtime = self.runtime.lock().await;
-
-        match runtime.execute_node(&self.node_id, ctx).await {
+        match self.runtime.execute(ctx).await {
             Ok(output) => output,
             Err(e) => {
                 tracing::error!(
-                    node = %self.node_id,
+                    node = %self.runtime.node_id(),
                     error = %e,
                     "JS node execution failed"
                 );
@@ -166,26 +166,26 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_plugin_runtime_creation() {
+    async fn test_plugin_node_runtime_creation() {
         // Initialize the V8 platform
         neo_js_runtime::init_platform();
 
         let code = r#"
-            Neo.nodes.register({
-                id: "test/MyNode",
+            export default defineNode({
                 name: "My Test Node",
+                inputs: [],
+                outputs: [{ name: "result", type: "number" }],
                 execute: async (ctx) => {
                     return { result: 42 };
                 }
             });
-            Neo.log.info("Test plugin loaded");
         "#;
 
-        let runtime = PluginRuntime::new("test", code);
+        let runtime = PluginNodeRuntime::new("test/MyNode", code);
         assert!(runtime.is_ok());
 
         let runtime = runtime.unwrap();
-        assert_eq!(runtime.plugin_id(), "test");
+        assert_eq!(runtime.node_id(), "test/MyNode");
 
         runtime.terminate();
     }
@@ -195,9 +195,13 @@ mod tests {
         neo_js_runtime::init_platform();
 
         let code = r#"
-            Neo.nodes.register({
-                id: "test/Add",
+            export default defineNode({
                 name: "Add Numbers",
+                inputs: [
+                    { name: "a", type: "number" },
+                    { name: "b", type: "number" }
+                ],
+                outputs: [{ name: "sum", type: "number" }],
                 execute: async (ctx) => {
                     const a = ctx.getInput("a") || 0;
                     const b = ctx.getInput("b") || 0;
@@ -206,7 +210,7 @@ mod tests {
             });
         "#;
 
-        let runtime = PluginRuntime::new("test", code).unwrap();
+        let runtime = PluginNodeRuntime::new("test/Add", code).unwrap();
 
         // Create a mock context
         let ctx = NodeContext {
@@ -221,7 +225,7 @@ mod tests {
             variables: HashMap::new(),
         };
 
-        let result = runtime.execute_node("test/Add", &ctx).await;
+        let result = runtime.execute(&ctx).await;
         assert!(result.is_ok(), "Execute failed: {:?}", result.err());
 
         let output = result.unwrap();

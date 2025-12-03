@@ -1,0 +1,1 @@
+defineNode({name:"Delay",category:"Flow",description:"Waits for a specified duration",inputs:[{name:"ms",type:"number"}],outputs:[],pure:!1,latent:!0,execute:async e=>{const t=e.getInput("ms")||1e3;return await new Promise(n=>setTimeout(n,t)),{}}});

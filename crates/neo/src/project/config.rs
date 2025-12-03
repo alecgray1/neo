@@ -198,6 +198,7 @@ pub struct BlueprintConfig {
 }
 
 /// Plugin manifest (plugins/*/neo-plugin.json)
+/// New declarative format with services and nodes arrays.
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct PluginManifest {
@@ -208,22 +209,38 @@ pub struct PluginManifest {
     /// Description
     #[serde(default)]
     pub description: Option<String>,
-    /// Entry point relative to plugin directory (e.g., "index.js")
-    #[serde(default = "default_plugin_entry")]
-    pub entry: String,
-    /// Event subscriptions
+    /// Services provided by this plugin
     #[serde(default)]
-    pub subscriptions: Vec<String>,
+    pub services: Vec<ServiceEntry>,
+    /// Blueprint nodes provided by this plugin
+    #[serde(default)]
+    pub nodes: Vec<NodeEntry>,
+}
+
+/// A service entry in the plugin manifest
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ServiceEntry {
+    /// Full service ID (plugin-id/service-name)
+    pub id: String,
+    /// Path to the built chunk relative to dist
+    pub entry: String,
     /// Tick interval in milliseconds
     #[serde(rename = "tickInterval")]
     pub tick_interval: Option<u64>,
-    /// Plugin-specific configuration
+    /// Event subscriptions
     #[serde(default)]
-    pub config: serde_json::Value,
+    pub subscriptions: Vec<String>,
 }
 
-fn default_plugin_entry() -> String {
-    "index.js".to_string()
+/// A node entry in the plugin manifest
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct NodeEntry {
+    /// Full node ID (plugin-id/node-name)
+    pub id: String,
+    /// Path to the built chunk relative to dist
+    pub entry: String,
 }
 
 /// A loaded plugin with resolved paths
@@ -233,8 +250,8 @@ pub struct LoadedPlugin {
     pub manifest: PluginManifest,
     /// Absolute path to the plugin directory
     pub plugin_dir: std::path::PathBuf,
-    /// Absolute path to the entry file
-    pub entry_path: std::path::PathBuf,
+    /// Absolute path to the manifest file's directory (where entry paths are relative to)
+    pub manifest_dir: std::path::PathBuf,
 }
 
 /// Loaded project with all configuration

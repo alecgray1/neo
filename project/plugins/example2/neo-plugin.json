@@ -1,6 +1,0 @@
-{
-  "id": "example2",
-  "name": "Example Plugin 2",
-  "version": "1.0.0",
-  "entry": "index.js"
-}

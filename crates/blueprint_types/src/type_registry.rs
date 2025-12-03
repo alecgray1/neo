@@ -7,8 +7,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::broadcast;
 
 use crate::PinType;
 
@@ -286,7 +287,7 @@ pub enum TypeRegistryError {
 /// async tasks.
 pub struct TypeRegistry {
     /// All registered types by ID
-    types: RwLock<HashMap<String, TypeDef>>,
+    types: DashMap<String, TypeDef>,
     /// Change notification channel
     change_tx: broadcast::Sender<TypeChange>,
 }
@@ -302,7 +303,7 @@ impl TypeRegistry {
     pub fn new() -> Self {
         let (change_tx, _) = broadcast::channel(256);
         Self {
-            types: RwLock::new(HashMap::new()),
+            types: DashMap::new(),
             change_tx,
         }
     }
@@ -327,13 +328,10 @@ impl TypeRegistry {
     pub async fn register(&self, def: TypeDef) -> Result<(), TypeRegistryError> {
         let type_id = def.id.clone();
 
-        {
-            let mut types = self.types.write().await;
-            if types.contains_key(&type_id) {
-                return Err(TypeRegistryError::TypeAlreadyExists(type_id));
-            }
-            types.insert(type_id, def.clone());
+        if self.types.contains_key(&type_id) {
+            return Err(TypeRegistryError::TypeAlreadyExists(type_id));
         }
+        self.types.insert(type_id, def.clone());
 
         // Notify subscribers (ignore send errors - means no subscribers)
         let _ = self.change_tx.send(TypeChange::Added(def));
@@ -347,13 +345,8 @@ impl TypeRegistry {
     /// registered as a new type.
     pub async fn register_or_update(&self, def: TypeDef) {
         let type_id = def.id.clone();
-        let is_update;
-
-        {
-            let mut types = self.types.write().await;
-            is_update = types.contains_key(&type_id);
-            types.insert(type_id, def.clone());
-        }
+        let is_update = self.types.contains_key(&type_id);
+        self.types.insert(type_id, def.clone());
 
         let change = if is_update {
             TypeChange::Updated(def)
@@ -369,13 +362,10 @@ impl TypeRegistry {
     pub async fn update(&self, def: TypeDef) -> Result<(), TypeRegistryError> {
         let type_id = def.id.clone();
 
-        {
-            let mut types = self.types.write().await;
-            if !types.contains_key(&type_id) {
-                return Err(TypeRegistryError::TypeNotFound(type_id));
-            }
-            types.insert(type_id, def.clone());
+        if !self.types.contains_key(&type_id) {
+            return Err(TypeRegistryError::TypeNotFound(type_id));
         }
+        self.types.insert(type_id, def.clone());
 
         let _ = self.change_tx.send(TypeChange::Updated(def));
 
@@ -386,12 +376,10 @@ impl TypeRegistry {
     ///
     /// Returns an error if the type does not exist.
     pub async fn remove(&self, type_id: &str) -> Result<TypeDef, TypeRegistryError> {
-        let removed = {
-            let mut types = self.types.write().await;
-            types
-                .remove(type_id)
-                .ok_or_else(|| TypeRegistryError::TypeNotFound(type_id.to_string()))?
-        };
+        let (_, removed) = self
+            .types
+            .remove(type_id)
+            .ok_or_else(|| TypeRegistryError::TypeNotFound(type_id.to_string()))?;
 
         let _ = self.change_tx.send(TypeChange::Removed {
             type_id: type_id.to_string(),
@@ -403,27 +391,25 @@ impl TypeRegistry {
 
     /// Get a type definition by ID
     pub async fn get(&self, type_id: &str) -> Option<TypeDef> {
-        self.types.read().await.get(type_id).cloned()
+        self.types.get(type_id).map(|r| r.clone())
     }
 
     /// Check if a type exists
     pub async fn contains(&self, type_id: &str) -> bool {
-        self.types.read().await.contains_key(type_id)
+        self.types.contains_key(type_id)
     }
 
     /// Get all types
     pub async fn all(&self) -> Vec<TypeDef> {
-        self.types.read().await.values().cloned().collect()
+        self.types.iter().map(|r| r.value().clone()).collect()
     }
 
     /// Get all types in a category
     pub async fn get_by_category(&self, category: TypeCategory) -> Vec<TypeDef> {
         self.types
-            .read()
-            .await
-            .values()
-            .filter(|t| t.category == category)
-            .cloned()
+            .iter()
+            .filter(|r| r.value().category == category)
+            .map(|r| r.value().clone())
             .collect()
     }
 
@@ -444,44 +430,41 @@ impl TypeRegistry {
 
     /// Get the number of registered types
     pub async fn len(&self) -> usize {
-        self.types.read().await.len()
+        self.types.len()
     }
 
     /// Check if the registry is empty
     pub async fn is_empty(&self) -> bool {
-        self.types.read().await.is_empty()
+        self.types.is_empty()
     }
 
     /// Get types by source
     pub async fn get_by_source(&self, source_type: &str) -> Vec<TypeDef> {
         self.types
-            .read()
-            .await
-            .values()
-            .filter(|t| match (&t.source, source_type) {
+            .iter()
+            .filter(|r| match (&r.value().source, source_type) {
                 (TypeSource::Builtin, "builtin") => true,
                 (TypeSource::File { .. }, "file") => true,
                 (TypeSource::JavaScript { .. }, "javascript") => true,
                 (TypeSource::Blueprint { .. }, "blueprint") => true,
                 _ => false,
             })
-            .cloned()
+            .map(|r| r.value().clone())
             .collect()
     }
 
     /// Export the registry as a snapshot (for serialization)
     pub async fn snapshot(&self) -> TypeRegistrySnapshot {
         TypeRegistrySnapshot {
-            types: self.types.read().await.clone(),
+            types: self.types.iter().map(|r| (r.key().clone(), r.value().clone())).collect(),
         }
     }
 
     /// Import types from a snapshot
     pub async fn import(&self, snapshot: TypeRegistrySnapshot) {
-        let mut types = self.types.write().await;
         for (id, def) in snapshot.types {
-            let is_update = types.contains_key(&id);
-            types.insert(id, def.clone());
+            let is_update = self.types.contains_key(&id);
+            self.types.insert(id, def.clone());
             let change = if is_update {
                 TypeChange::Updated(def)
             } else {
@@ -498,9 +481,8 @@ impl TypeRegistry {
             .map(|t| (t.id.clone(), t.category))
             .collect();
 
-        let mut types = self.types.write().await;
         for (type_id, category) in to_remove {
-            types.remove(&type_id);
+            self.types.remove(&type_id);
             let _ = self.change_tx.send(TypeChange::Removed { type_id, category });
         }
     }

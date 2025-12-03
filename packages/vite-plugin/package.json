@@ -10,6 +10,7 @@
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "glob": "^11.0.0",
     "ws": "^8.18.0"
   },
   "devDependencies": {
@@ -19,12 +20,6 @@
     "vite": "^6.0.3"
   },
   "peerDependencies": {
-    "vite": "^5.0.0 || ^6.0.0",
-    "@anthropic/neo-extension-api": "^0.1.0"
-  },
-  "peerDependenciesMeta": {
-    "@anthropic/neo-extension-api": {
-      "optional": true
-    }
+    "vite": "^5.0.0 || ^6.0.0"
   }
 }

@@ -1,0 +1,1 @@
+defineNode({name:"Add Numbers",category:"Math",description:"Adds two numbers together",inputs:[{name:"a",type:"number"},{name:"b",type:"number"}],outputs:[{name:"sum",type:"number"}],pure:!0,execute:async e=>{const t=e.getInput("a")||0,n=e.getInput("b")||0;return{sum:t+n}}});

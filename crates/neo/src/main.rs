@@ -20,7 +20,6 @@ use neo::engine::{BlueprintExecutor, register_builtin_nodes};
 use neo::plugin::{JsService, JsServiceConfig};
 use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
 use neo::server::{AppState, create_router};
-use neo_js_runtime::{scan_and_spawn_runtime, RuntimeServices};
 
 /// Neo Building Automation Server
 #[derive(Parser, Debug)]
@@ -48,12 +47,21 @@ struct Args {
     no_watch: bool,
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Initialize V8 platform on main thread before any workers are spawned.
+fn main() -> Result<()> {
+    // Initialize V8 platform on the actual main thread before tokio runtime starts.
     // This must happen before any JsRuntime is created.
+    // Deno's pattern: init_v8 is called before the tokio runtime.
     neo_js_runtime::init_platform();
 
+    // Build and run tokio runtime
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async_main())
+}
+
+async fn async_main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
         .with(
@@ -225,86 +233,64 @@ fn blueprint_from_config(id: &str, config: &BlueprintConfig) -> Blueprint {
 
 /// Start all loaded plugins
 ///
-/// Uses scan_and_spawn_runtime to discover services and create runtimes.
-/// The first service reuses the scan runtime, additional services get their own.
+/// Each service from the plugin manifest is loaded as a separate JsService
+/// with its own V8 runtime. Service metadata comes from the build manifest.
 async fn start_plugins(
     service_manager: &ServiceManager,
     plugins: &std::collections::HashMap<String, LoadedPlugin>,
 ) {
     for (plugin_id, plugin) in plugins {
-        // Read the plugin's JavaScript code
-        let code = match tokio::fs::read_to_string(&plugin.entry_path).await {
-            Ok(code) => code,
-            Err(e) => {
-                error!("Failed to read plugin code for {}: {}", plugin_id, e);
-                continue;
-            }
-        };
-
-        // Scan the plugin AND get a runtime handle in one operation
-        // This avoids V8 corruption from dropping and recreating runtimes
-        let (scan_result, first_handle) = match scan_and_spawn_runtime(
-            format!("js:{}", plugin_id),
-            code.clone(),
-            RuntimeServices::default(),
-        ) {
-            Ok(result) => result,
-            Err(e) => {
-                error!("Failed to scan plugin {}: {}", plugin_id, e);
-                continue;
-            }
-        };
-
-        if scan_result.services.is_empty() {
-            info!("Plugin {} has no services registered", plugin_id);
-            // Terminate the unused runtime
-            first_handle.terminate();
+        if plugin.manifest.services.is_empty() {
+            info!("Plugin {} has no services", plugin_id);
             continue;
         }
 
         info!(
-            "Plugin {} registered {} service(s)",
+            "Loading plugin {} ({} services, {} nodes)",
             plugin_id,
-            scan_result.services.len()
+            plugin.manifest.services.len(),
+            plugin.manifest.nodes.len()
         );
 
-        // Create a JsService for each discovered service (1:1 model)
-        // First service reuses the scan runtime, others get new runtimes
-        let mut first_handle_option = Some(first_handle);
+        // Start each service defined in the manifest
+        for service_entry in &plugin.manifest.services {
+            // Read the service's JavaScript chunk
+            let entry_path = plugin.manifest_dir.join(&service_entry.entry);
+            let code = match tokio::fs::read_to_string(&entry_path).await {
+                Ok(code) => code,
+                Err(e) => {
+                    error!(
+                        "Failed to read service code for {}: {} (path: {})",
+                        service_entry.id, e, entry_path.display()
+                    );
+                    continue;
+                }
+            };
 
-        for service_def in scan_result.services {
-            let config = JsServiceConfig::new(
-                &service_def.id,
-                &service_def.name,
-                code.clone(),
+            // Create service config from manifest entry
+            let mut config = JsServiceConfig::new(
+                &service_entry.id,
+                &service_entry.id, // Use ID as name for now
+                code,
             )
-            .with_target_service_id(&service_def.id)
-            .with_subscriptions(service_def.subscriptions)
-            .with_config(plugin.manifest.config.clone());
+            .with_subscriptions(service_entry.subscriptions.clone());
 
-            // Use tick interval from JS registration if present
-            let config = if let Some(tick_ms) = service_def.tick_interval {
-                config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
-            } else {
-                config
-            };
+            // Add tick interval if specified in manifest
+            if let Some(tick_ms) = service_entry.tick_interval {
+                config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
+            }
 
-            // First service gets the pre-created runtime, others spawn their own
-            let service = if let Some(handle) = first_handle_option.take() {
-                JsService::with_runtime(config, handle)
-            } else {
-                JsService::new(config)
-            };
+            let service = JsService::new(config);
 
             match service_manager.spawn(service).await {
                 Ok(handle) => {
                     info!(
                         "Service started: {} (service_id: {})",
-                        service_def.id, handle.service_id
+                        service_entry.id, handle.service_id
                     );
                 }
                 Err(e) => {
-                    error!("Failed to start service {}: {}", service_def.id, e);
+                    error!("Failed to start service {}: {}", service_entry.id, e);
                 }
             }
         }

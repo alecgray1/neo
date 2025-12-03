@@ -1,7 +1,5 @@
-// Example 2 Plugin - Single service
-
-Neo.services.register({
-  id: "example2/watchdog",
+// Watchdog Service - monitors system health
+export default defineService({
   name: "System Watchdog",
   tickInterval: 10000,
 
@@ -22,5 +20,3 @@ Neo.services.register({
     Neo.log.debug("Watchdog check #" + ctx.state.checks + " - uptime: " + uptime + "s");
   },
 });
-
-Neo.log.info("Example2 plugin loaded - registered 1 service");

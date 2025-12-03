@@ -31,17 +31,13 @@ const packageJson = `{
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "npm run dev:server & npm run dev:app",
-    "dev:server": "vite build --watch",
-    "dev:app": "NEO_BUILD_TARGET=app vite build --watch",
-    "build": "npm run build:server && npm run build:app",
-    "build:server": "vite build",
-    "build:app": "NEO_BUILD_TARGET=app vite build",
+    "build": "vite build",
+    "dev": "vite build --watch",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@neo/vite-plugin": "file:/home/alec/Work/neo/packages/vite-plugin",
-    "typescript": "^5.0.0",
+    "@neo/vite-plugin": "workspace:*",
+    "typescript": "^5.7.0",
     "vite": "^6.0.0"
   }
 }
@@ -55,22 +51,7 @@ export default defineConfig({
     neo({
       id: "${pluginId}",
       name: "${pluginName}",
-
-      // Server-side plugin config (runs in Neo's runtime)
-      server: {
-        // subscriptions: ["temperature/*"],
-        // tickInterval: 1000,
-      },
-
-      // App-side extension config (runs in Neo app)
-      app: {
-        activationEvents: ["onStartupFinished"],
-        contributes: {
-          commands: [
-            { id: "${pluginId}.helloWorld", title: "Hello World", category: "${pluginName}" }
-          ],
-        },
-      },
+      description: "A Neo plugin",
     }),
   ],
 });
@@ -84,225 +65,112 @@ const tsconfig = `{
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    "lib": ["ES2022", "DOM"]
+    "esModuleInterop": true
   },
-  "include": ["src/**/*", "neo.d.ts", "app.d.ts"]
+  "include": ["src/**/*", "neo.d.ts"]
 }
 `;
 
-const neoDts = `/**
- * Neo Plugin API Type Definitions
- */
+const neoDts = `// Neo Plugin Type Definitions
 
-/** Node input/output pin definition */
-interface PinDef {
+interface ServiceContext {
+  state: Record<string, unknown>;
+  config: Record<string, unknown>;
+}
+
+interface ServiceConfig {
+  name: string;
+  tickInterval?: number;
+  subscriptions?: string[];
+  onStart?: (ctx: ServiceContext) => Promise<void>;
+  onStop?: (ctx: ServiceContext) => Promise<void>;
+  onTick?: (ctx: ServiceContext) => Promise<void>;
+  onEvent?: (ctx: ServiceContext, event: NeoEvent) => Promise<void>;
+}
+
+interface NeoEvent {
+  type: string;
+  source: string;
+  data: unknown;
+  timestamp: number;
+}
+
+interface PinDefinition {
   name: string;
   type: string;
-  description?: string;
 }
 
-/** Node definition for blueprint nodes */
-interface NodeDef {
-  /** Unique node ID (e.g., "myPlugin/Add") */
-  id: string;
-  /** Display name */
-  name: string;
-  /** Category for grouping in the node palette */
-  category?: string;
-  /** Node description */
-  description?: string;
-  /** Input pins */
-  inputs?: PinDef[];
-  /** Output pins */
-  outputs?: PinDef[];
-  /** Pure nodes have no side effects */
-  pure?: boolean;
-  /** Latent nodes are async */
-  latent?: boolean;
-  /** Execute function */
-  execute: (ctx: NodeContext) => Promise<Record<string, unknown>>;
-}
-
-/** Context passed to node execute function */
 interface NodeContext {
   nodeId: string;
   config: Record<string, unknown>;
   inputs: Record<string, unknown>;
   variables: Record<string, unknown>;
-  getInput(name: string): unknown;
-  getConfig(key: string): unknown;
-  getVariable(name: string): unknown;
+  getInput: (name: string) => unknown;
+  getConfig: (key: string) => unknown;
+  getVariable: (name: string) => unknown;
 }
 
-/** Service definition */
-interface ServiceDef {
-  id: string;
+interface NodeConfig {
   name: string;
-  onStart?: () => Promise<void>;
-  onStop?: () => Promise<void>;
-  onTick?: () => Promise<void>;
-  onEvent?: (event: NeoEvent) => Promise<void>;
-}
-
-/** Event object */
-interface NeoEvent {
-  type: string;
-  source: string;
-  data?: unknown;
-  timestamp?: number;
-}
-
-/** Type definition */
-interface TypeDef {
-  id: string;
-  name: string;
+  category?: string;
   description?: string;
-  schema?: unknown;
+  inputs: PinDefinition[];
+  outputs: PinDefinition[];
+  pure?: boolean;
+  latent?: boolean;
+  execute: (ctx: NodeContext) => Promise<Record<string, unknown>>;
 }
 
-declare global {
-  const Neo: {
-    log: {
-      trace(message: string): void;
-      debug(message: string): void;
-      info(message: string): void;
-      warn(message: string): void;
-      error(message: string): void;
-    };
+declare function defineService<T extends ServiceConfig>(config: T): T;
+declare function defineNode<T extends NodeConfig>(config: T): T;
 
-    points: {
-      read(pointId: string): Promise<unknown>;
-      write(pointId: string, value: unknown): Promise<void>;
-    };
-
-    events: {
-      emit(type: string, data?: unknown): void;
-    };
-
-    nodes: {
-      register(def: NodeDef): void;
-      get(id: string): NodeDef | undefined;
-      list(): string[];
-    };
-
-    services: {
-      register(def: ServiceDef): void;
-      get(id: string): ServiceDef | undefined;
-      list(): string[];
-    };
-
-    types: {
-      register(def: TypeDef): void;
-      get(id: string): TypeDef | undefined;
-      list(): string[];
-    };
-
-    utils: {
-      now(): number;
-    };
+declare const Neo: {
+  log: {
+    error: (msg: string) => void;
+    warn: (msg: string) => void;
+    info: (msg: string) => void;
+    debug: (msg: string) => void;
+    trace: (msg: string) => void;
   };
-}
-
-export {};
+  points: {
+    read: (id: string) => Promise<unknown>;
+    write: (id: string, value: unknown) => Promise<void>;
+  };
+  events: {
+    emit: (type: string, data: unknown) => void;
+  };
+  utils: {
+    now: () => number;
+  };
+};
 `;
 
-// App-side type definitions (for neo.* API in extension host)
-const appDts = `/**
- * Neo App Extension API Type Definitions
- *
- * These types are available in src/app/ code that runs in the Neo app's extension host.
- */
-
-/** Disposable interface for cleanup */
-interface Disposable {
-  dispose(): void;
-}
-
-/** Extension context passed to activate() */
-interface ExtensionContext {
-  readonly extensionPath: string;
-  readonly subscriptions: Disposable[];
-}
-
-/** Quick pick item */
-interface QuickPickItem {
-  label: string;
-  description?: string;
-  detail?: string;
-}
-
-declare global {
-  /** Neo app extension API */
-  const neo: {
-    readonly version: string;
-
-    /** Command registration and execution */
-    commands: {
-      registerCommand(id: string, handler: (...args: unknown[]) => unknown): Disposable;
-      executeCommand<T = unknown>(id: string, ...args: unknown[]): Promise<T>;
-    };
-
-    /** Window/UI operations */
-    window: {
-      showInformationMessage(message: string, ...items: string[]): Promise<string | undefined>;
-      showWarningMessage(message: string, ...items: string[]): Promise<string | undefined>;
-      showErrorMessage(message: string, ...items: string[]): Promise<string | undefined>;
-      showQuickPick(items: QuickPickItem[] | string[], options?: { placeHolder?: string }): Promise<QuickPickItem | string | undefined>;
-      showInputBox(options?: { prompt?: string; placeHolder?: string; value?: string }): Promise<string | undefined>;
-    };
-
-    /** Context key management */
-    context: {
-      set(key: string, value: unknown): void;
-    };
-
-    /** Server communication */
-    server: {
-      readonly connected: boolean;
-      request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T>;
-      subscribe(paths: string[]): Promise<Disposable>;
-      onDidReceiveChange(listener: (event: { path: string; type: string; value?: unknown }) => void): Disposable;
-    };
-  };
-}
-
-export type { ExtensionContext, Disposable, QuickPickItem };
-`;
-
-const indexTs = `/**
- * ${pluginName}
- *
- * A Neo plugin that registers nodes and services.
- */
-
-// Register a background service
-Neo.services.register({
-  id: "${pluginId}/main",
+const mainServiceTs = `// Main Service - the primary service for this plugin
+export default defineService({
   name: "${pluginName} Service",
+  tickInterval: 5000, // Tick every 5 seconds
 
-  onStart: async () => {
+  onStart: async (ctx) => {
+    ctx.state.count = 0;
     Neo.log.info("${pluginName} service started!");
   },
 
-  onStop: async () => {
-    Neo.log.info("${pluginName} service stopped");
+  onStop: async (ctx) => {
+    Neo.log.info("${pluginName} service stopped after " + ctx.state.count + " ticks");
   },
 
-  onTick: async () => {
-    // Called periodically if tick_interval is configured
+  onTick: async (ctx) => {
+    ctx.state.count = (ctx.state.count as number) + 1;
+    Neo.log.debug("${pluginName} tick #" + ctx.state.count);
   },
 });
+`;
 
-// Register a blueprint node
-Neo.nodes.register({
-  id: "${pluginId}/Example",
-  name: "Example Node",
+const exampleNodeTs = `// Example Node - doubles a number
+export default defineNode({
+  name: "Double",
   category: "${pluginName}",
-  description: "An example node that doubles a number",
+  description: "Doubles the input value",
   inputs: [
     { name: "value", type: "number" },
   ],
@@ -316,73 +184,45 @@ Neo.nodes.register({
     return { result: value * 2 };
   },
 });
-
-Neo.log.info("${pluginName} plugin loaded");
 `;
 
 const gitignore = `node_modules/
 dist/
 `;
 
-// App extension template (for when app config is enabled)
-const appIndexTs = `/**
- * ${pluginName} - App Extension
- *
- * This file runs in the Neo app's extension host.
- * It has access to the \`neo\` API for UI and commands.
- */
-
-import type { ExtensionContext } from "../../app.d.ts";
-
-// Called when the extension is activated
-export function activate(context: ExtensionContext) {
-  console.log("${pluginName} extension activated!");
-
-  // Register a command
-  const disposable = neo.commands.registerCommand("${pluginId}.helloWorld", () => {
-    neo.window.showInformationMessage("Hello from ${pluginName}!");
-  });
-
-  context.subscriptions.push(disposable);
-}
-
-// Called when the extension is deactivated
-export function deactivate() {
-  console.log("${pluginName} extension deactivated");
-}
-`;
-
 // Create project
 try {
   await mkdir(projectDir);
   await mkdir(join(projectDir, "src"));
-  await mkdir(join(projectDir, "src", "server"));
-  await mkdir(join(projectDir, "src", "app"));
+  await mkdir(join(projectDir, "src", "services"));
+  await mkdir(join(projectDir, "src", "nodes"));
 
   await writeFile(join(projectDir, "package.json"), packageJson);
   await writeFile(join(projectDir, "vite.config.ts"), viteConfig);
   await writeFile(join(projectDir, "tsconfig.json"), tsconfig);
   await writeFile(join(projectDir, "neo.d.ts"), neoDts);
-  await writeFile(join(projectDir, "app.d.ts"), appDts);
-  await writeFile(join(projectDir, "src", "server", "index.ts"), indexTs);
-  await writeFile(join(projectDir, "src", "app", "index.ts"), appIndexTs);
+  await writeFile(join(projectDir, "src", "services", "main.ts"), mainServiceTs);
+  await writeFile(join(projectDir, "src", "nodes", "example.ts"), exampleNodeTs);
   await writeFile(join(projectDir, ".gitignore"), gitignore);
 
   console.log("Created files:");
   console.log("  package.json");
   console.log("  vite.config.ts");
   console.log("  tsconfig.json");
-  console.log("  neo.d.ts            - Server-side type definitions");
-  console.log("  app.d.ts            - App-side type definitions");
-  console.log("  src/server/index.ts - Server-side plugin (Neo runtime)");
-  console.log("  src/app/index.ts    - App extension (Neo UI)");
+  console.log("  neo.d.ts                  - Type definitions");
+  console.log("  src/services/main.ts      - Main service");
+  console.log("  src/nodes/example.ts      - Example node");
   console.log("  .gitignore");
+  console.log("");
+  console.log("Plugin structure:");
+  console.log("  src/services/*.ts  - Each file exports a service via defineService()");
+  console.log("  src/nodes/*.ts     - Each file exports a node via defineNode()");
   console.log("");
   console.log("Next steps:");
   console.log(`  cd ${projectName}`);
-  console.log("  npm install");
-  console.log("  npm run dev    # Watch both server & app");
-  console.log("  npm run build  # Build both server & app");
+  console.log("  pnpm install");
+  console.log("  pnpm build    # Build the plugin");
+  console.log("  pnpm dev      # Watch mode for development");
 } catch (err) {
   if (err.code === "EEXIST") {
     console.error(`Error: Directory '${projectName}' already exists`);

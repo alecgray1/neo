@@ -2,12 +2,14 @@
 //!
 //! A service implemented in JavaScript, running in a dedicated thread
 //! using neo-js-runtime (Deno/V8).
+//!
+//! Each service runs in its own runtime with its own V8 isolate.
+//! Services use `export default defineService({...})` pattern.
 
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
 
 use blueprint_runtime::service::{
     Event, Service, ServiceContext, ServiceError, ServiceResult, ServiceSpec,
@@ -17,15 +19,12 @@ use neo_js_runtime::{spawn_runtime, RuntimeHandle, RuntimeServices};
 /// Configuration for a JavaScript service
 #[derive(Debug, Clone)]
 pub struct JsServiceConfig {
-    /// Service ID
+    /// Service ID (e.g., "example/ticker")
     pub id: String,
     /// Service name
     pub name: String,
-    /// JavaScript source code
+    /// JavaScript source code (the service chunk)
     pub code: String,
-    /// Target service ID in the JS code (for 1:1 model)
-    /// If set, only this service's lifecycle methods are called
-    pub target_service_id: Option<String>,
     /// Event patterns to subscribe to
     pub subscriptions: Vec<String>,
     /// Optional tick interval
@@ -41,17 +40,10 @@ impl JsServiceConfig {
             id: id.into(),
             name: name.into(),
             code: code.into(),
-            target_service_id: None,
             subscriptions: Vec::new(),
             tick_interval: None,
             config: serde_json::Value::Object(Default::default()),
         }
-    }
-
-    /// Set the target service ID (for 1:1 model)
-    pub fn with_target_service_id(mut self, target_id: impl Into<String>) -> Self {
-        self.target_service_id = Some(target_id.into());
-        self
     }
 
     /// Add event subscriptions
@@ -76,12 +68,11 @@ impl JsServiceConfig {
 /// A service implemented in JavaScript
 ///
 /// Each JsService runs in its own thread with its own V8 isolate.
-/// The JS code should export lifecycle callbacks (onStart, onStop, onTick, onEvent).
+/// The JS code should use `export default defineService({...})` with
+/// lifecycle callbacks (onStart, onStop, onTick, onEvent).
 pub struct JsService {
     config: JsServiceConfig,
-    runtime: Option<Arc<Mutex<RuntimeHandle>>>,
-    /// Pre-created runtime handle (used for first service after scan)
-    pre_created_handle: Option<RuntimeHandle>,
+    runtime: Option<Arc<RuntimeHandle>>,
 }
 
 impl JsService {
@@ -90,19 +81,6 @@ impl JsService {
         Self {
             config,
             runtime: None,
-            pre_created_handle: None,
-        }
-    }
-
-    /// Create a JsService with an existing RuntimeHandle.
-    ///
-    /// This is used for the first service discovered during plugin scan,
-    /// where we reuse the runtime that was already created for scanning.
-    pub fn with_runtime(config: JsServiceConfig, handle: RuntimeHandle) -> Self {
-        Self {
-            config,
-            runtime: None,
-            pre_created_handle: Some(handle),
         }
     }
 
@@ -128,34 +106,32 @@ impl Service for JsService {
     async fn on_start(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
         tracing::info!(service = %self.config.id, "Starting JS service");
 
-        // Use pre-created handle if available, otherwise spawn new runtime
-        let handle = if let Some(h) = self.pre_created_handle.take() {
-            tracing::debug!(service = %self.config.id, "Using pre-created runtime handle");
-            h
-        } else {
-            tracing::debug!(service = %self.config.id, "Spawning new runtime");
-            // Create runtime services (could inject event publisher, point store, etc.)
-            let services = RuntimeServices::default();
+        // Create runtime services (could inject event publisher, point store, etc.)
+        let services = RuntimeServices::default();
 
-            // Spawn the JS runtime
-            spawn_runtime(
-                format!("js:{}", self.config.id),
-                self.config.code.clone(),
-                services,
-            )
-            .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?
-        };
+        // Spawn the JS runtime with the service code
+        // The runtime will load the service and assign it the ID
+        let handle = spawn_runtime(
+            format!("js:{}", self.config.id),
+            self.config.code.clone(),
+            self.config.id.clone(),
+            services,
+        )
+        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
 
-        // Start the JS service
-        let target_id = self.config.target_service_id.as_ref().ok_or_else(|| {
-            ServiceError::InitializationFailed("target_service_id is required".to_string())
-        })?;
-        handle
-            .start_service(target_id)
-            .await
-            .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
+        let handle = Arc::new(handle);
 
-        self.runtime = Some(Arc::new(Mutex::new(handle)));
+        // Start the service (calls onStart in JS)
+        // Use spawn_blocking to avoid blocking the async runtime
+        let handle_clone = handle.clone();
+        tokio::task::spawn_blocking(move || {
+            handle_clone.start_service()
+        })
+        .await
+        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?
+        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
+
+        self.runtime = Some(handle);
 
         tracing::info!(service = %self.config.id, "JS service started");
         Ok(())
@@ -164,17 +140,12 @@ impl Service for JsService {
     async fn on_stop(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
         tracing::info!(service = %self.config.id, "Stopping JS service");
 
-        if let Some(runtime) = self.runtime.take() {
-            let handle = runtime.lock().await;
-
-            // Stop JS service gracefully
-            let stop_result = if let Some(ref target_id) = self.config.target_service_id {
-                handle.stop_service(target_id).await
-            } else {
-                Ok(()) // No target_service_id means nothing to stop
-            };
-
-            if let Err(e) = stop_result {
+        if let Some(handle) = self.runtime.take() {
+            // Stop JS service gracefully (calls onStop in JS)
+            let handle_clone = handle.clone();
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                handle_clone.stop_service()
+            }).await {
                 tracing::warn!(service = %self.config.id, error = %e, "Error stopping JS service");
             }
 
@@ -199,17 +170,14 @@ impl Service for JsService {
     }
 
     async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-        if let Some(ref runtime) = self.runtime {
-            let handle = runtime.lock().await;
+        if let Some(ref handle) = self.runtime {
+            let handle_clone = handle.clone();
 
-            // Tick the target service
-            let tick_result = if let Some(ref target_id) = self.config.target_service_id {
-                handle.tick_service(target_id).await
-            } else {
-                Ok(()) // No target_service_id means nothing to tick
-            };
-
-            if let Err(e) = tick_result {
+            // Tick the service (calls onTick in JS)
+            // Use spawn_blocking to avoid blocking the async runtime
+            if let Err(e) = tokio::task::spawn_blocking(move || {
+                handle_clone.tick_service()
+            }).await {
                 tracing::warn!(service = %self.config.id, error = %e, "Error during JS service tick");
             }
         }

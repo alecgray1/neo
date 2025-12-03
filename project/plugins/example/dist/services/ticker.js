@@ -1,0 +1,1 @@
+defineService({name:"Example Ticker",tickInterval:5e3,onStart:async e=>{e.state.count=0,Neo.log.info("Ticker service started")},onStop:async e=>{Neo.log.info("Ticker service stopped after "+e.state.count+" ticks")},onTick:async e=>{e.state.count+=1,Neo.log.debug("Tick #"+e.state.count)}});
