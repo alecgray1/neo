@@ -14,7 +14,7 @@ use blueprint_runtime::service::ServiceManager;
 use blueprint_types::TypeRegistry;
 
 use crate::project::{BlueprintConfig, Project};
-use crate::plugin::{ProcessService, ProcessServiceConfig};
+use crate::plugin::{JsPluginConfig, JsPluginService};
 
 use super::protocol::{PluginRegistration, ServerMessage};
 
@@ -300,22 +300,25 @@ impl AppState {
         // Store the registration
         self.inner.dev_plugins.write().await.insert(plugin_id.clone(), registration.clone());
 
+        // Read the plugin's JavaScript code
+        let code = tokio::fs::read_to_string(&registration.entry_path)
+            .await
+            .map_err(|e| format!("Failed to read plugin code: {}", e))?;
+
         // Create and spawn the plugin service
-        let config = ProcessServiceConfig::new(
+        let mut config = JsPluginConfig::new(
             &registration.id,
             &registration.name,
-            PathBuf::from(&registration.entry_path),
+            code,
         )
         .with_config(registration.config.clone())
         .with_subscriptions(registration.subscriptions.clone());
 
-        let config = if let Some(tick_ms) = registration.tick_interval {
-            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
-        } else {
-            config
-        };
+        if let Some(tick_ms) = registration.tick_interval {
+            config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
+        }
 
-        let service = ProcessService::new(config);
+        let service = JsPluginService::new(config);
 
         match self.inner.service_manager.spawn(service).await {
             Ok(handle) => {
@@ -352,22 +355,25 @@ impl AppState {
             }
         };
 
-        // Restart with updated path
-        let config = ProcessServiceConfig::new(
+        // Read the updated plugin code
+        let code = tokio::fs::read_to_string(&registration.entry_path)
+            .await
+            .map_err(|e| format!("Failed to read plugin code: {}", e))?;
+
+        // Restart with updated code
+        let mut config = JsPluginConfig::new(
             &registration.id,
             &registration.name,
-            PathBuf::from(&registration.entry_path),
+            code,
         )
         .with_config(registration.config.clone())
         .with_subscriptions(registration.subscriptions.clone());
 
-        let config = if let Some(tick_ms) = registration.tick_interval {
-            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
-        } else {
-            config
-        };
+        if let Some(tick_ms) = registration.tick_interval {
+            config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
+        }
 
-        let service = ProcessService::new(config);
+        let service = JsPluginService::new(config);
 
         match self.inner.service_manager.spawn(service).await {
             Ok(handle) => {

@@ -13,14 +13,12 @@ name = "neo"
 path = "src/main.rs"
 
 [dependencies]
-# V8 binary serialization (for plugin IPC)
-v8_valueserializer = "0.1"
-
 # Internal blueprint crates
 blueprint_types.workspace = true
 blueprint_macros.workspace = true
 blueprint_runtime.workspace = true
 blueprint_server.workspace = true
+neo-js-runtime.workspace = true
 
 tokio.workspace = true
 

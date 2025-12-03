@@ -11,6 +11,7 @@ doctest = false
 [dependencies]
 blueprint_types.workspace = true
 blueprint_macros.workspace = true
+neo-js-runtime.workspace = true
 
 serde.workspace = true
 serde_json.workspace = true

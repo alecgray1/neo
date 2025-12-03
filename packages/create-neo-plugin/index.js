@@ -98,10 +98,73 @@ const neoDts = `/**
  * Neo Plugin API Type Definitions
  */
 
+/** Node input/output pin definition */
+interface PinDef {
+  name: string;
+  type: string;
+  description?: string;
+}
+
+/** Node definition for blueprint nodes */
+interface NodeDef {
+  /** Unique node ID (e.g., "myPlugin/Add") */
+  id: string;
+  /** Display name */
+  name: string;
+  /** Category for grouping in the node palette */
+  category?: string;
+  /** Node description */
+  description?: string;
+  /** Input pins */
+  inputs?: PinDef[];
+  /** Output pins */
+  outputs?: PinDef[];
+  /** Pure nodes have no side effects */
+  pure?: boolean;
+  /** Latent nodes are async */
+  latent?: boolean;
+  /** Execute function */
+  execute: (ctx: NodeContext) => Promise<Record<string, unknown>>;
+}
+
+/** Context passed to node execute function */
+interface NodeContext {
+  nodeId: string;
+  config: Record<string, unknown>;
+  inputs: Record<string, unknown>;
+  variables: Record<string, unknown>;
+  getInput(name: string): unknown;
+  getConfig(key: string): unknown;
+  getVariable(name: string): unknown;
+}
+
+/** Service definition */
+interface ServiceDef {
+  id: string;
+  name: string;
+  onStart?: () => Promise<void>;
+  onStop?: () => Promise<void>;
+  onTick?: () => Promise<void>;
+  onEvent?: (event: NeoEvent) => Promise<void>;
+}
+
+/** Event object */
+interface NeoEvent {
+  type: string;
+  source: string;
+  data?: unknown;
+  timestamp?: number;
+}
+
+/** Type definition */
+interface TypeDef {
+  id: string;
+  name: string;
+  description?: string;
+  schema?: unknown;
+}
+
 declare global {
-  /**
-   * Neo global object available to all plugins
-   */
   const Neo: {
     log: {
       trace(message: string): void;
@@ -111,22 +174,37 @@ declare global {
       error(message: string): void;
     };
 
-    events: {
-      publish(event: { type: string; data?: unknown }): void;
-    };
-
     points: {
       read(pointId: string): Promise<unknown>;
       write(pointId: string, value: unknown): Promise<void>;
     };
 
-    config: Record<string, unknown>;
-  };
+    events: {
+      emit(type: string, data?: unknown): void;
+    };
 
-  function onStart(payload?: { config?: Record<string, unknown> }): void | Promise<void>;
-  function onStop(): void | Promise<void>;
-  function onEvent(event: { type: string; source: string; data?: unknown }): void | Promise<void>;
-  function onTick(): void | Promise<void>;
+    nodes: {
+      register(def: NodeDef): void;
+      get(id: string): NodeDef | undefined;
+      list(): string[];
+    };
+
+    services: {
+      register(def: ServiceDef): void;
+      get(id: string): ServiceDef | undefined;
+      list(): string[];
+    };
+
+    types: {
+      register(def: TypeDef): void;
+      get(id: string): TypeDef | undefined;
+      list(): string[];
+    };
+
+    utils: {
+      now(): number;
+    };
+  };
 }
 
 export {};
@@ -198,29 +276,48 @@ export type { ExtensionContext, Disposable, QuickPickItem };
 const indexTs = `/**
  * ${pluginName}
  *
- * A Neo plugin.
+ * A Neo plugin that registers nodes and services.
  */
 
-// Called when the plugin starts
-globalThis.onStart = async (payload) => {
-  Neo.log.info("${pluginName} started!");
-  Neo.log.debug(\`Config: \${JSON.stringify(Neo.config)}\`);
-};
+// Register a background service
+Neo.services.register({
+  id: "${pluginId}/main",
+  name: "${pluginName} Service",
 
-// Called when the plugin stops
-globalThis.onStop = async () => {
-  Neo.log.info("${pluginName} stopping...");
-};
+  onStart: async () => {
+    Neo.log.info("${pluginName} service started!");
+  },
 
-// Called when an event is received
-globalThis.onEvent = async (event) => {
-  Neo.log.debug(\`Event: \${event.type}\`);
-};
+  onStop: async () => {
+    Neo.log.info("${pluginName} service stopped");
+  },
 
-// Called on tick interval (if configured)
-globalThis.onTick = async () => {
-  // Periodic tasks here
-};
+  onTick: async () => {
+    // Called periodically if tick_interval is configured
+  },
+});
+
+// Register a blueprint node
+Neo.nodes.register({
+  id: "${pluginId}/Example",
+  name: "Example Node",
+  category: "${pluginName}",
+  description: "An example node that doubles a number",
+  inputs: [
+    { name: "value", type: "number" },
+  ],
+  outputs: [
+    { name: "result", type: "number" },
+  ],
+  pure: true,
+
+  execute: async (ctx) => {
+    const value = (ctx.getInput("value") as number) || 0;
+    return { result: value * 2 };
+  },
+});
+
+Neo.log.info("${pluginName} plugin loaded");
 `;
 
 const gitignore = `node_modules/

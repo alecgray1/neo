@@ -10,16 +10,16 @@ use anyhow::Result;
 use clap::Parser;
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use blueprint_runtime::service::ServiceManager;
 use blueprint_runtime::NodeRegistry;
+use blueprint_runtime::service::ServiceManager;
 use blueprint_types::{Blueprint, TypeRegistry};
 
-use neo::engine::{register_builtin_nodes, BlueprintExecutor};
-use neo::plugin::{ProcessService, ProcessServiceConfig};
+use neo::engine::{BlueprintExecutor, register_builtin_nodes};
+use neo::plugin::{JsPluginConfig, JsPluginService};
 use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
-use neo::server::{create_router, AppState};
+use neo::server::{AppState, create_router};
 
 /// Neo Building Automation Server
 #[derive(Parser, Debug)]
@@ -51,9 +51,10 @@ struct Args {
 async fn main() -> Result<()> {
     // Initialize tracing
     tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-            EnvFilter::new("neo=info,tower_http=debug")
-        }))
+        .with(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("neo=info,tower_http=debug")),
+        )
         .with(tracing_subscriber::fmt::layer())
         .init();
 
@@ -80,11 +81,7 @@ async fn main() -> Result<()> {
 
     match ProjectLoader::load(project_path).await {
         Ok(project) => {
-            info!(
-                "Loaded project: {} ({})",
-                project.name(),
-                project.id()
-            );
+            info!("Loaded project: {} ({})", project.name(), project.id());
 
             // Start blueprint executor if we have blueprints and it's not disabled
             if !args.no_blueprints && !project.blueprints.is_empty() {
@@ -118,7 +115,11 @@ async fn main() -> Result<()> {
             }
         }
         Err(e) => {
-            error!("Failed to load project from {}: {}", project_path.display(), e);
+            error!(
+                "Failed to load project from {}: {}",
+                project_path.display(),
+                e
+            );
             std::process::exit(1);
         }
     }
@@ -160,11 +161,8 @@ async fn start_blueprint_executor(
     blueprints: &std::collections::HashMap<String, BlueprintConfig>,
 ) {
     // Create executor
-    let mut executor = BlueprintExecutor::new(
-        "blueprint-executor",
-        "Blueprint Executor",
-        node_registry,
-    );
+    let mut executor =
+        BlueprintExecutor::new("blueprint-executor", "Blueprint Executor", node_registry);
 
     // Load each blueprint
     for (id, config) in blueprints {
@@ -226,21 +224,28 @@ async fn start_plugins(
     plugins: &std::collections::HashMap<String, LoadedPlugin>,
 ) {
     for (id, plugin) in plugins {
-        let config = ProcessServiceConfig::new(
+        // Read the plugin's JavaScript code
+        let code = match tokio::fs::read_to_string(&plugin.entry_path).await {
+            Ok(code) => code,
+            Err(e) => {
+                error!("Failed to read plugin code for {}: {}", id, e);
+                continue;
+            }
+        };
+
+        let mut config = JsPluginConfig::new(
             &plugin.manifest.id,
             &plugin.manifest.name,
-            &plugin.entry_path,
+            code,
         )
         .with_config(plugin.manifest.config.clone())
         .with_subscriptions(plugin.manifest.subscriptions.clone());
 
-        let config = if let Some(tick_ms) = plugin.manifest.tick_interval {
-            config.with_tick_interval(std::time::Duration::from_millis(tick_ms))
-        } else {
-            config
-        };
+        if let Some(tick_ms) = plugin.manifest.tick_interval {
+            config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
+        }
 
-        let service = ProcessService::new(config);
+        let service = JsPluginService::new(config);
 
         match service_manager.spawn(service).await {
             Ok(handle) => {

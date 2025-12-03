@@ -370,6 +370,7 @@ dependencies = [
  "blueprint_macros",
  "blueprint_types",
  "dashmap",
+ "neo-js-runtime",
  "rand",
  "serde",
  "serde_json",
@@ -1520,6 +1521,7 @@ dependencies = [
  "dashmap",
  "figment",
  "futures",
+ "neo-js-runtime",
  "notify",
  "parking_lot",
  "rand",
@@ -1538,18 +1540,19 @@ dependencies = [
  "tracing-subscriber",
  "ts-rs",
  "uuid",
- "v8_valueserializer",
  "wildmatch",
 ]
 
 [[package]]
-name = "neo-plugin-host"
+name = "neo-js-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "deno_core",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2821,21 +2824,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "v8_valueserializer"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97599c400fc79925922b58303e98fcb8fa88f573379a08ddb652e72cbd2e70f6"
-dependencies = [
- "bitflags 2.10.0",
- "encoding_rs",
- "indexmap",
- "num-bigint",
- "serde",
- "thiserror 1.0.69",
- "wtf8",
-]
-
-[[package]]
 name = "valuable"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3285,12 +3273,6 @@ name = "writeable"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9edde0db4769d2dc68579893f2306b26c6ecfbe0ef499b013d731b7b9247e0b9"
-
-[[package]]
-name = "wtf8"
-version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c01ae8492c38f52376efd3a17d0994b6bcf3df1e39c0226d458b7d81670b2a06"
 
 [[package]]
 name = "wyz"

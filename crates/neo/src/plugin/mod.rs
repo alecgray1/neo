@@ -1,13 +1,12 @@
-//! Process-isolated plugin system using deno_core
+//! JavaScript plugin system using in-process thread-based runtime
 //!
-//! Each JS/TS plugin runs in a separate OS process for fault isolation.
+//! Plugins run in dedicated threads using neo-js-runtime. Each plugin
+//! gets its own V8 isolate running in a thread with a LocalSet (no work-stealing).
+//!
+//! Following Deno's pattern, crash recovery is not handled at the runtime level.
+//! If a plugin crashes, the error is propagated to the service manager which
+//! decides how to handle it (log, restart, alert, etc.).
 
-mod ipc;
-mod process_service;
-mod supervisor;
-pub mod v8_serde;
+mod js_service;
 
-pub use ipc::{MessageType, PluginMessage};
-pub use process_service::{ProcessService, ProcessServiceConfig};
-pub use supervisor::{RestartPolicy, Supervisor};
-pub use v8_serde::{deserialize_to_json, serialize_from_json, V8SerdeError};
+pub use js_service::{JsPluginConfig, JsPluginService};

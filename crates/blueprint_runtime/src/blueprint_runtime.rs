@@ -6,8 +6,10 @@ pub use blueprint_types;
 
 mod executor;
 mod registry;
+mod js_executor;
 pub mod service;
 
 pub use executor::*;
 pub use registry::*;
+pub use js_executor::*;
 pub use service::*;
