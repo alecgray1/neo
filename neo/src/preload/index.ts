@@ -280,6 +280,10 @@ const developerAPI = {
   // Set developer mode (starts/stops ExtensionDevServer)
   setDevMode: (enabled: boolean): void => ipcRenderer.send('developer:setDevMode', enabled),
 
+  // Set extension logs only mode
+  setExtensionLogsOnly: (enabled: boolean): void =>
+    ipcRenderer.send('developer:setExtensionLogsOnly', enabled),
+
   // Reload all extensions
   reloadExtensions: (): Promise<void> => ipcRenderer.invoke('developer:reloadExtensions'),
 

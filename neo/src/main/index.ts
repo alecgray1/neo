@@ -10,6 +10,39 @@ import { getExtensionDevServer } from './extensionHost/ExtensionDevServer'
 
 const isMac = process.platform === 'darwin'
 
+// Extension logs only mode - when true, only show [ExtHost] logs
+let extensionLogsOnly = false
+
+// Store original console methods
+const originalConsoleLog = console.log.bind(console)
+const originalConsoleError = console.error.bind(console)
+const originalConsoleWarn = console.warn.bind(console)
+
+// Override console methods to filter logs
+console.log = (...args: unknown[]) => {
+  if (extensionLogsOnly) {
+    const firstArg = String(args[0] ?? '')
+    if (!firstArg.includes('[ExtHost]')) return
+  }
+  originalConsoleLog(...args)
+}
+
+console.error = (...args: unknown[]) => {
+  if (extensionLogsOnly) {
+    const firstArg = String(args[0] ?? '')
+    if (!firstArg.includes('[ExtHost]')) return
+  }
+  originalConsoleError(...args)
+}
+
+console.warn = (...args: unknown[]) => {
+  if (extensionLogsOnly) {
+    const firstArg = String(args[0] ?? '')
+    if (!firstArg.includes('[ExtHost]')) return
+  }
+  originalConsoleWarn(...args)
+}
+
 function createWindow(): BrowserWindow {
   // Create the browser window with platform-specific frameless settings
   const mainWindow = new BrowserWindow({
@@ -127,6 +160,12 @@ app.whenReady().then(() => {
     } else {
       devServer.stop()
     }
+  })
+
+  ipcMain.on('developer:setExtensionLogsOnly', (_event, enabled: boolean) => {
+    extensionLogsOnly = enabled
+    // Use original to ensure this message is always shown
+    originalConsoleLog('[Main] Extension logs only:', enabled ? 'enabled' : 'disabled')
   })
 
   ipcMain.handle('developer:reloadExtensions', async () => {

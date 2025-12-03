@@ -97,16 +97,21 @@ function initializeDeveloperModeContext(): IDisposable {
   const contextKeyService = getContextKeyService()
   const userSettings = getUserSettingsService()
 
-  // Set initial value
-  const initialValue = userSettings.getValue<boolean>('developer.devMode') ?? false
-  console.log('[Init] Developer mode initial value:', initialValue)
-  contextKeyService.set('isDeveloperMode', initialValue)
+  // Set initial value for dev mode
+  const initialDevMode = userSettings.getValue<boolean>('developer.devMode') ?? false
+  console.log('[Init] Developer mode initial value:', initialDevMode)
+  contextKeyService.set('isDeveloperMode', initialDevMode)
 
   // Notify main process of initial dev mode state (for ExtensionDevServer on startup)
-  // Always call setDevMode to ensure main process is in sync
   if (window.developerAPI?.setDevMode) {
-    console.log('[Init] Notifying main process of dev mode:', initialValue)
-    window.developerAPI.setDevMode(initialValue)
+    console.log('[Init] Notifying main process of dev mode:', initialDevMode)
+    window.developerAPI.setDevMode(initialDevMode)
+  }
+
+  // Set initial value for extension logs only
+  const initialExtLogsOnly = userSettings.getValue<boolean>('developer.extensionLogsOnly') ?? false
+  if (window.developerAPI?.setExtensionLogsOnly) {
+    window.developerAPI.setExtensionLogsOnly(initialExtLogsOnly)
   }
 
   // Watch for setting changes
@@ -118,6 +123,13 @@ function initializeDeveloperModeContext(): IDisposable {
       // Notify main process of dev mode change (for ExtensionDevServer)
       if (window.developerAPI?.setDevMode) {
         window.developerAPI.setDevMode(newValue)
+      }
+    }
+
+    if (changedIds.includes('developer.extensionLogsOnly')) {
+      const newValue = userSettings.getValue<boolean>('developer.extensionLogsOnly') ?? false
+      if (window.developerAPI?.setExtensionLogsOnly) {
+        window.developerAPI.setExtensionLogsOnly(newValue)
       }
     }
   })

@@ -637,6 +637,17 @@ export const builtinSettings: ISettingDefinition[] = [
       description:
         'Enable developer mode. Shows developer tools commands and enables extension hot reload.'
     }
+  },
+  {
+    id: 'developer.extensionLogsOnly',
+    category: ['Developer'],
+    categoryOrder: 100,
+    schema: {
+      type: 'boolean',
+      default: false,
+      description:
+        'When enabled, only show extension logs in the console. Hides Neo internal logs.'
+    }
   }
 ]
 
