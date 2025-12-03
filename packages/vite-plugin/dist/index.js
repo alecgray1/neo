@@ -29,11 +29,13 @@ function detectBuildTargets(pluginDir, options) {
 export function neo(options) {
     let resolvedConfig;
     let ws = null;
+    let electronWs = null;
     let isDevMode = false;
     let outputPath = "";
     let pluginDir = "";
     let buildTarget = "server"; // Default to server for legacy compatibility
     const devServerUrl = options.devServer ?? "ws://localhost:9600/ws";
+    const electronDevServerUrl = options.electronDevServer ?? "ws://localhost:9601";
     let isRegistered = false;
     // Normalize legacy options to new format
     const normalizedOptions = {
@@ -113,6 +115,62 @@ export function neo(options) {
         };
         ws.send(JSON.stringify(msg));
         console.log(`[neo] Notified Neo of rebuild`);
+    };
+    /**
+     * Connect to Electron's extension dev server (for app builds hot reload)
+     */
+    const connectToElectron = () => {
+        if (electronWs)
+            return;
+        electronWs = new WebSocket(electronDevServerUrl);
+        electronWs.on("open", () => {
+            console.log(`[neo] Connected to Electron extension dev server`);
+        });
+        electronWs.on("error", (err) => {
+            if (err.code === "ECONNREFUSED") {
+                console.log(`[neo] Electron dev server not running (dev mode not enabled?), will retry on rebuild...`);
+            }
+            else {
+                console.error(`[neo] Electron WebSocket error:`, err.message);
+            }
+            electronWs = null;
+        });
+        electronWs.on("close", () => {
+            console.log(`[neo] Disconnected from Electron dev server`);
+            electronWs = null;
+        });
+        electronWs.on("message", (data) => {
+            try {
+                const msg = JSON.parse(data.toString());
+                if (msg.type === "pong") {
+                    // Heartbeat response
+                }
+            }
+            catch {
+                // Ignore parse errors
+            }
+        });
+    };
+    /**
+     * Notify Electron dev server to reload the extension
+     */
+    const notifyElectronReload = () => {
+        if (!electronWs || electronWs.readyState !== WebSocket.OPEN) {
+            connectToElectron();
+            // Retry after connection established
+            setTimeout(() => {
+                if (electronWs && electronWs.readyState === WebSocket.OPEN) {
+                    notifyElectronReload();
+                }
+            }, 500);
+            return;
+        }
+        const msg = {
+            type: "extension:reload",
+            extensionId: options.id,
+        };
+        electronWs.send(JSON.stringify(msg));
+        console.log(`[neo] Notified Electron to reload extension: ${options.id}`);
     };
     /**
      * Write the unified manifest (package.json with neo field)
@@ -252,34 +310,53 @@ export function neo(options) {
             resolvedConfig = config;
         },
         buildStart() {
-            // Only connect to Neo server for server builds
-            if (isDevMode && buildTarget === "server") {
-                connectToNeo();
+            // Connect to appropriate dev server based on build target
+            if (isDevMode) {
+                if (buildTarget === "server") {
+                    connectToNeo();
+                }
+                else if (buildTarget === "app") {
+                    connectToElectron();
+                }
             }
         },
         writeBundle() {
             const outDir = resolvedConfig.build.outDir;
             // Write manifest
             writeManifest(resolve(pluginDir, outDir), buildTarget);
-            // Only register/notify for server builds
-            if (isDevMode && buildTarget === "server") {
-                if (!ws) {
-                    connectToNeo();
+            // Notify appropriate dev server based on build target
+            if (isDevMode) {
+                if (buildTarget === "server") {
+                    if (!ws) {
+                        connectToNeo();
+                    }
+                    setTimeout(() => {
+                        if (!isRegistered) {
+                            registerPlugin();
+                        }
+                        else {
+                            notifyRebuilt();
+                        }
+                    }, 100);
                 }
-                setTimeout(() => {
-                    if (!isRegistered) {
-                        registerPlugin();
-                    }
-                    else {
-                        notifyRebuilt();
-                    }
-                }, 100);
+                else if (buildTarget === "app") {
+                    // Notify Electron to reload the extension
+                    setTimeout(() => {
+                        notifyElectronReload();
+                    }, 100);
+                }
             }
         },
         closeBundle() {
-            if (!isDevMode && ws) {
-                ws.close();
-                ws = null;
+            if (!isDevMode) {
+                if (ws) {
+                    ws.close();
+                    ws = null;
+                }
+                if (electronWs) {
+                    electronWs.close();
+                    electronWs = null;
+                }
             }
         },
     };

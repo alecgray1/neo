@@ -522,13 +522,78 @@ export class ExtensionHostMain {
     return this._extensions
   }
 
+  /**
+   * Reload a specific extension (deactivate, rescan, reactivate)
+   */
+  async reloadExtension(extensionId: string): Promise<void> {
+    if (!this._protocol) {
+      throw new Error('Extension host not running')
+    }
+
+    const ext = this._extensions.find((e) => e.id === extensionId)
+    if (!ext) {
+      console.warn(`[ExtensionHost] Extension not found: ${extensionId}`)
+      return
+    }
+
+    console.log(`[ExtensionHost] Reloading extension: ${extensionId}`)
+
+    const extHostExtensions = this._protocol.getProxy(ExtHostContext.ExtHostExtensions)
+
+    // 1. Deactivate extension
+    try {
+      await extHostExtensions.$deactivateExtension(extensionId)
+    } catch (err) {
+      console.warn(`[ExtensionHost] Failed to deactivate ${extensionId}:`, err)
+    }
+
+    // 2. Rescan the extension manifest
+    const scanner = new ExtensionScanner(this._extensionsPath)
+    const updated = await scanner.scanSingle(ext.path)
+    if (updated) {
+      // Update internal state
+      const idx = this._extensions.findIndex((e) => e.id === extensionId)
+      if (idx >= 0) {
+        this._extensions[idx] = updated
+      }
+    }
+
+    // 3. Re-collect all contributions
+    this._collectContributions()
+
+    // 4. Reactivate extension
+    try {
+      await extHostExtensions.$activateExtension(extensionId)
+    } catch (err) {
+      console.error(`[ExtensionHost] Failed to reactivate ${extensionId}:`, err)
+    }
+
+    // 5. Notify renderer
+    this._notifyRenderer('extension:reloaded', { extensionId })
+
+    console.log(`[ExtensionHost] Extension reloaded: ${extensionId}`)
+  }
+
+  /**
+   * Reload all extensions
+   */
+  async reloadAllExtensions(): Promise<void> {
+    console.log('[ExtensionHost] Reloading all extensions')
+
+    for (const ext of this._extensions) {
+      await this.reloadExtension(ext.id)
+    }
+
+    console.log('[ExtensionHost] All extensions reloaded')
+  }
+
   private _notifyRenderer(channel: string, data: unknown): void {
     if (this._mainWindow && !this._mainWindow.isDestroyed()) {
       this._mainWindow.webContents.send(channel, data)
     }
   }
 
-  private async _invokeRenderer<T>(channel: string, data: unknown): Promise<T> {
+  private async _invokeRenderer<T>(channel: string, data: Record<string, unknown>): Promise<T> {
     // This requires setting up invoke handlers in the renderer
     // For now, use a simple request/response pattern
     return new Promise((resolve, reject) => {

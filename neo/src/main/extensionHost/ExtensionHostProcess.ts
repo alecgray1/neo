@@ -296,7 +296,9 @@ class ExtensionHostProcess {
   private async _loadExtensionModule(mainPath: string): Promise<ExtensionModule> {
     try {
       // Use dynamic import for ES modules
-      const module = await import(mainPath)
+      // Add cache buster to force reload on hot reload
+      const cacheBuster = `?t=${Date.now()}`
+      const module = await import(mainPath + cacheBuster)
       return module.default ?? module
     } catch (err) {
       console.error(`[ExtHostProcess] Failed to load module: ${mainPath}`, err)

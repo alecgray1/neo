@@ -621,6 +621,22 @@ export const builtinSettings: ISettingDefinition[] = [
       default: true,
       description: 'Controls whether to follow symlinks while searching.'
     }
+  },
+
+  // ============================================================
+  // DEVELOPER SETTINGS
+  // ============================================================
+
+  {
+    id: 'developer.devMode',
+    category: ['Developer'],
+    categoryOrder: 100,
+    schema: {
+      type: 'boolean',
+      default: false,
+      description:
+        'Enable developer mode. Shows developer tools commands and enables extension hot reload.'
+    }
   }
 ]
 

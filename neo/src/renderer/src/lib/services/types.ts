@@ -48,13 +48,20 @@ export class DisposableStore implements IDisposable {
     this._disposables.delete(disposable)
   }
 
-  dispose(): void {
-    if (this._isDisposed) return
-    this._isDisposed = true
+  /**
+   * Dispose all items and clear, but keep the store usable
+   */
+  clear(): void {
     for (const d of this._disposables) {
       d.dispose()
     }
     this._disposables.clear()
+  }
+
+  dispose(): void {
+    if (this._isDisposed) return
+    this._isDisposed = true
+    this.clear()
   }
 }
 

@@ -79,6 +79,8 @@ export interface NeoPluginConfig {
     app?: AppConfig;
     /** Neo dev server URL for hot reload (default: ws://localhost:9600/ws) */
     devServer?: string;
+    /** Electron extension dev server URL for app hot reload (default: ws://localhost:9601) */
+    electronDevServer?: string;
     /** @deprecated Use server.subscriptions instead */
     subscriptions?: string[];
     /** @deprecated Use server.tickInterval instead */

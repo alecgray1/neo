@@ -10,11 +10,12 @@ import { fileCommands } from './file'
 import { editCommands } from './edit'
 import { tabCommands } from './tab'
 import { explorerCommands } from './explorer'
+import { developerCommands } from './developer'
 
 /**
  * All built-in commands
  */
-export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands, ...tabCommands, ...explorerCommands]
+export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands, ...tabCommands, ...explorerCommands, ...developerCommands]
 
 /**
  * Register all built-in commands

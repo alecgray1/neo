@@ -46,6 +46,23 @@ class UserSettingsService implements IUserSettingsService, IDisposable {
   private _onDidChange = new Emitter<string[]>()
   private _initialized = false
 
+  constructor() {
+    // Load from localStorage synchronously on construction
+    // This ensures settings are available immediately
+    this._loadFromLocalStorageSync()
+  }
+
+  private _loadFromLocalStorageSync(): void {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        this._parseSettings(stored)
+      }
+    } catch (error) {
+      console.error('Failed to load settings from localStorage:', error)
+    }
+  }
+
   get settings(): Map<string, unknown> {
     return new Map(this._settings)
   }

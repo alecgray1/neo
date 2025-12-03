@@ -248,7 +248,44 @@ const extensionAPI = {
     return (): void => {
       ipcRenderer.removeListener('context:set', handler)
     }
+  },
+
+  // Extension reload event
+  onExtensionReloaded: (callback: (data: { extensionId: string }) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { extensionId: string }
+    ): void => callback(data)
+    ipcRenderer.on('extension:reloaded', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extension:reloaded', handler)
+    }
+  },
+
+  // Extensions ready event (fired after extension host starts)
+  onExtensionsReady: (callback: () => void): (() => void) => {
+    const handler = (): void => callback()
+    ipcRenderer.on('extensions:ready', handler)
+    return (): void => {
+      ipcRenderer.removeListener('extensions:ready', handler)
+    }
   }
+}
+
+// Developer API - dev tools and extension hot reload
+const developerAPI = {
+  // Toggle Chrome DevTools
+  toggleDevTools: (): void => ipcRenderer.send('developer:toggleDevTools'),
+
+  // Set developer mode (starts/stops ExtensionDevServer)
+  setDevMode: (enabled: boolean): void => ipcRenderer.send('developer:setDevMode', enabled),
+
+  // Reload all extensions
+  reloadExtensions: (): Promise<void> => ipcRenderer.invoke('developer:reloadExtensions'),
+
+  // Reload a specific extension
+  reloadExtension: (extensionId: string): Promise<void> =>
+    ipcRenderer.invoke('developer:reloadExtension', extensionId)
 }
 
 // Project API - high-level data operations
@@ -284,6 +321,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('serverAPI', serverAPI)
     contextBridge.exposeInMainWorld('projectAPI', projectAPI)
     contextBridge.exposeInMainWorld('extensionAPI', extensionAPI)
+    contextBridge.exposeInMainWorld('developerAPI', developerAPI)
   } catch (error) {
     console.error(error)
   }
@@ -304,4 +342,6 @@ if (process.contextIsolated) {
   window.projectAPI = projectAPI
   // @ts-ignore (define in dts)
   window.extensionAPI = extensionAPI
+  // @ts-ignore (define in dts)
+  window.developerAPI = developerAPI
 }

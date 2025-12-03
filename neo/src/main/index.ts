@@ -6,6 +6,7 @@ import { themeService } from './services/ThemeService'
 import { layoutService } from './services/LayoutService'
 import { webSocketService } from './services/WebSocketService'
 import { getExtensionHostMain } from './extensionHost'
+import { getExtensionDevServer } from './extensionHost/ExtensionDevServer'
 
 const isMac = process.platform === 'darwin'
 
@@ -89,6 +90,8 @@ app.whenReady().then(() => {
     try {
       await extensionHost.start()
       console.log('[Main] Extension host started')
+      // Notify renderer that extensions are ready
+      mainWindow.webContents.send('extensions:ready')
     } catch (err) {
       console.error('[Main] Failed to start extension host:', err)
     }
@@ -110,6 +113,29 @@ app.whenReady().then(() => {
   // Notify renderer of maximize state changes
   mainWindow.on('maximize', () => mainWindow.webContents.send('window:maximized-change', true))
   mainWindow.on('unmaximize', () => mainWindow.webContents.send('window:maximized-change', false))
+
+  // Developer IPC handlers
+  ipcMain.on('developer:toggleDevTools', () => {
+    mainWindow.webContents.toggleDevTools()
+  })
+
+  ipcMain.on('developer:setDevMode', (_event, enabled: boolean) => {
+    console.log('[Main] Developer mode:', enabled ? 'enabled' : 'disabled')
+    const devServer = getExtensionDevServer()
+    if (enabled) {
+      devServer.start()
+    } else {
+      devServer.stop()
+    }
+  })
+
+  ipcMain.handle('developer:reloadExtensions', async () => {
+    await extensionHost.reloadAllExtensions()
+  })
+
+  ipcMain.handle('developer:reloadExtension', async (_event, extensionId: string) => {
+    await extensionHost.reloadExtension(extensionId)
+  })
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

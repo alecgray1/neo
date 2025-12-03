@@ -114,6 +114,7 @@ export const IExtensionServiceId = createServiceId<IExtensionService>('IExtensio
 class ExtensionService implements IExtensionService {
   private _contributions: CollectedContributions | null = null
   private _disposables = new DisposableStore()
+  private _contributionDisposables = new DisposableStore() // Separate store for contribution registrations
   private _extensionCommands = new Set<string>()
 
   private _onDidLoadContributions = new Emitter<CollectedContributions>()
@@ -156,10 +157,23 @@ class ExtensionService implements IExtensionService {
       contextKeyService.setContext(key, value)
     })
     this._disposables.add({ dispose: unsubContext })
+
+    // Listen for extension reload to refresh contributions
+    const unsubReloaded = window.extensionAPI.onExtensionReloaded?.(() => {
+      console.log('[ExtensionService] Extension reloaded, refreshing contributions...')
+      this.loadContributions()
+    })
+    if (unsubReloaded) {
+      this._disposables.add({ dispose: unsubReloaded })
+    }
   }
 
   async loadContributions(): Promise<void> {
     try {
+      // Clear old contribution registrations before loading new ones
+      this._contributionDisposables.clear()
+      this._extensionCommands.clear()
+
       this._contributions = await window.extensionAPI.getContributions()
       console.log('[ExtensionService] Loaded contributions:', this._contributions)
 
@@ -197,7 +211,7 @@ class ExtensionService implements IExtensionService {
           return window.extensionAPI.executeCommand(cmd.id, ...args)
         }
       })
-      this._disposables.add(disposable)
+      this._contributionDisposables.add(disposable)
       this._extensionCommands.add(cmd.id)
     }
   }
@@ -211,7 +225,7 @@ class ExtensionService implements IExtensionService {
         mac: kb.mac,
         when: kb.when
       })
-      this._disposables.add(disposable)
+      this._contributionDisposables.add(disposable)
     }
   }
 
@@ -238,7 +252,7 @@ class ExtensionService implements IExtensionService {
           when: item.when,
           group: item.group
         })
-        this._disposables.add(disposable)
+        this._contributionDisposables.add(disposable)
       }
     }
   }
@@ -261,6 +275,7 @@ class ExtensionService implements IExtensionService {
   }
 
   dispose(): void {
+    this._contributionDisposables.dispose()
     this._disposables.dispose()
     this._onDidLoadContributions.dispose()
     this._onDidRegisterCommand.dispose()
