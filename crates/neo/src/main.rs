@@ -12,12 +12,11 @@ use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-use blueprint_runtime::NodeRegistry;
 use blueprint_runtime::service::ServiceManager;
 use blueprint_runtime::JsNodeLibrary;
 use blueprint_types::{Blueprint, TypeRegistry};
 
-use neo::engine::{BlueprintExecutor, register_builtin_nodes};
+use neo::engine::BlueprintExecutor;
 use neo::plugin::{JsService, JsServiceConfig};
 use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
 use neo::server::{AppState, create_router};
@@ -77,10 +76,6 @@ async fn async_main() -> Result<()> {
 
     info!("Starting Neo server v{}", env!("CARGO_PKG_VERSION"));
 
-    // Create node registry and register built-in nodes
-    let mut node_registry = NodeRegistry::new();
-    register_builtin_nodes(&mut node_registry);
-
     // Create core components
     let service_manager = Arc::new(ServiceManager::new());
     let type_registry = Arc::new(TypeRegistry::new());
@@ -103,14 +98,10 @@ async fn async_main() -> Result<()> {
             }
             let js_library = Arc::new(js_library);
 
-            // Now make the registry immutable
-            let node_registry = Arc::new(node_registry);
-
             // Start blueprint executor if we have blueprints and it's not disabled
             if !args.no_blueprints && !project.blueprints.is_empty() {
                 start_blueprint_executor(
                     &service_manager,
-                    node_registry.clone(),
                     js_library.clone(),
                     &project.blueprints,
                 )
@@ -181,15 +172,13 @@ async fn async_main() -> Result<()> {
 /// Start the blueprint executor service with loaded blueprints
 async fn start_blueprint_executor(
     service_manager: &ServiceManager,
-    node_registry: Arc<NodeRegistry>,
     js_library: Arc<JsNodeLibrary>,
     blueprints: &std::collections::HashMap<String, BlueprintConfig>,
 ) {
-    // Create executor with both Rust node registry and JS node library
+    // Create executor with JS node library
     let mut executor = BlueprintExecutor::new(
         "blueprint-executor",
         "Blueprint Executor",
-        node_registry,
         js_library,
     );
 

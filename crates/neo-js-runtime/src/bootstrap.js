@@ -142,9 +142,6 @@ globalThis.Neo = {
     write: async (id, value) => {
       await core.ops.op_point_write(id, value);
     },
-    subscribe: (pattern, callback) => {
-      throw new Error("Neo.points.subscribe not yet implemented");
-    },
   },
 
   /**
@@ -153,9 +150,6 @@ globalThis.Neo = {
   events: {
     emit: (type, data) => {
       core.ops.op_event_emit(type, "plugin", data);
-    },
-    subscribe: (pattern, callback) => {
-      throw new Error("Neo.events.subscribe not yet implemented");
     },
   },
 

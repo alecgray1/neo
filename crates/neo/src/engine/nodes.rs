@@ -4,7 +4,7 @@
 
 use std::collections::HashMap;
 
-use blueprint_runtime::{NodeContext, NodeOutput, NodeRegistry};
+use blueprint_runtime::{NodeOutput, NodeRegistry};
 use blueprint_types::{NodeDef, PinDef, PinType};
 
 /// Register all built-in nodes
@@ -551,6 +551,7 @@ fn register_utility_nodes(registry: &mut NodeRegistry) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blueprint_runtime::NodeContext;
 
     #[test]
     fn test_register_builtin_nodes() {

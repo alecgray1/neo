@@ -4,9 +4,7 @@ members = [
   "crates/neo",
   "crates/neo-js-runtime",
   "crates/blueprint_types",
-  "crates/blueprint_macros",
   "crates/blueprint_runtime",
-  "crates/blueprint_server",
 ]
 default-members = ["crates/neo"]
 
@@ -17,9 +15,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 blueprint_types = { path = "crates/blueprint_types" }
-blueprint_macros = { path = "crates/blueprint_macros" }
 blueprint_runtime = { path = "crates/blueprint_runtime" }
-blueprint_server = { path = "crates/blueprint_server" }
 neo-js-runtime = { path = "crates/neo-js-runtime" }
 
 tokio = { version = "1.40", features = ["full"] }

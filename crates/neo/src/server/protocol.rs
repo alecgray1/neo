@@ -182,7 +182,7 @@ impl ServerMessage {
     }
 
     /// Create an error response
-    pub fn error_response(id: impl Into<String>, code: ErrorCode, message: impl Into<String>) -> Self {
+    pub fn error_response(id: impl Into<String>, _code: ErrorCode, message: impl Into<String>) -> Self {
         Self::Response {
             id: id.into(),
             success: false,

@@ -155,11 +155,6 @@ impl ServiceHandle {
 
         rx.await.map_err(|_| ServiceError::ChannelClosed)
     }
-
-    /// Update the service state (internal use)
-    pub(crate) fn set_state(&self, state: ServiceState) {
-        self.state.store(state as u8, Ordering::SeqCst);
-    }
 }
 
 impl std::fmt::Debug for ServiceHandle {

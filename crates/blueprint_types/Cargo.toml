@@ -6,7 +6,6 @@ publish.workspace = true
 
 [lib]
 path = "src/blueprint_types.rs"
-crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [dependencies]
@@ -16,15 +15,3 @@ uuid.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 dashmap.workspace = true
-
-[dependencies.wasm-bindgen]
-workspace = true
-optional = true
-
-[dependencies.serde-wasm-bindgen]
-version = "0.6"
-optional = true
-
-[features]
-default = []
-wasm = ["wasm-bindgen", "serde-wasm-bindgen"]

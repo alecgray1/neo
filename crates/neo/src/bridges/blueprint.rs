@@ -8,7 +8,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use blueprint_types::{FieldDef, PinType, TypeCategory, TypeChange, TypeDef, TypeRegistry};
+use blueprint_types::{PinType, TypeCategory, TypeChange, TypeDef, TypeRegistry};
 
 /// Message sent to blueprint clients when types change
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -210,6 +210,7 @@ impl BlueprintBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blueprint_types::FieldDef;
 
     #[test]
     fn test_type_schema_info_from_typedef() {

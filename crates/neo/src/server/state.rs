@@ -2,7 +2,7 @@
 //!
 //! Shared state accessible by all WebSocket handlers.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 

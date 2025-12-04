@@ -8,7 +8,7 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use super::protocol::{ChangeType, ClientMessage, ErrorCode, PluginRegistration, ServerMessage};
+use super::protocol::{ClientMessage, ErrorCode, PluginRegistration, ServerMessage};
 use super::state::AppState;
 use crate::project::{BlueprintConfig, ProjectLoader};
 
@@ -50,7 +50,7 @@ pub async fn handle_websocket(socket: WebSocket, state: AppState) {
                 Message::Close(_) => {
                     break;
                 }
-                Message::Ping(data) => {
+                Message::Ping(_data) => {
                     // Pong is handled automatically by axum
                     tracing::trace!("Received ping from {}", session_id);
                 }
@@ -326,7 +326,7 @@ async fn handle_create(
     state: &AppState,
     session_id: Uuid,
     id: &str,
-    path: &str,
+    _path: &str,
     _data: Value,
 ) {
     // TODO: Implement create logic - write to disk, reload, broadcast
@@ -341,7 +341,7 @@ async fn handle_create(
 }
 
 /// Handle delete request
-async fn handle_delete(state: &AppState, session_id: Uuid, id: &str, path: &str) {
+async fn handle_delete(state: &AppState, session_id: Uuid, id: &str, _path: &str) {
     // TODO: Implement delete logic - delete from disk, reload, broadcast
     send_error(
         state,

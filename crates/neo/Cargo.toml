@@ -15,9 +15,7 @@ path = "src/main.rs"
 [dependencies]
 # Internal blueprint crates
 blueprint_types.workspace = true
-blueprint_macros.workspace = true
 blueprint_runtime.workspace = true
-blueprint_server.workspace = true
 neo-js-runtime.workspace = true
 
 tokio.workspace = true
@@ -29,10 +27,6 @@ bacnet = { path = "/home/alec/Personal/bacnet" }
 futures.workspace = true
 async-trait.workspace = true
 
-# Protocols
-tokio-modbus = "0.14"
-bytes = "1.7"
-
 # Web API & WebSocket
 axum = { version = "0.7", features = ["ws"] }
 tower = "0.5"
@@ -43,12 +37,8 @@ serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true
 
-# Database
-redb = "2.1"
-
 # Configuration
 config = "0.14"
-figment = { version = "0.10", features = ["toml", "env"] }
 
 # Logging & Tracing
 tracing.workspace = true

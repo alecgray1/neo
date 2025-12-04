@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::fs;
 use tokio::sync::broadcast;
 
-use blueprint_types::{FieldDef, PinType, TypeCategory, TypeChange, TypeDef, TypeRegistry};
+use blueprint_types::{PinType, TypeCategory, TypeDef, TypeRegistry};
 
 /// Bridge that syncs TypeRegistry to TypeScript declaration files
 pub struct TypeScriptBridge {
@@ -193,6 +193,7 @@ fn pin_type_to_ts(pin_type: &PinType) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use blueprint_types::FieldDef;
 
     #[tokio::test]
     async fn test_generate_declarations() {

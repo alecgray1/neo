@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use dashmap::DashMap;
@@ -12,7 +11,7 @@ use dashmap::DashMap;
 use blueprint_runtime::service::{
     Event, Service, ServiceContext, ServiceError, ServiceResult, ServiceSpec,
 };
-use blueprint_runtime::{BlueprintJsRuntime, ExecutionTrigger, JsNodeLibrary, NodeRegistry};
+use blueprint_runtime::{BlueprintJsRuntime, ExecutionTrigger, JsNodeLibrary};
 use blueprint_types::Blueprint;
 use neo_js_runtime::RuntimeServices;
 
@@ -23,8 +22,6 @@ pub struct BlueprintState {
     pub blueprint: Blueprint,
     /// Current variable values
     pub variables: HashMap<String, serde_json::Value>,
-    /// Whether execution is currently active
-    pub active: bool,
 }
 
 /// Blueprint Executor Service
@@ -38,8 +35,6 @@ pub struct BlueprintExecutor {
     id: String,
     /// Human-readable name
     name: String,
-    /// The node registry for looking up Rust node executors
-    registry: Arc<NodeRegistry>,
     /// Library of JS node definitions (code, not runtimes)
     js_library: Arc<JsNodeLibrary>,
     /// Per-blueprint JS runtimes (created on blueprint load)
@@ -55,13 +50,11 @@ impl BlueprintExecutor {
     pub fn new(
         id: impl Into<String>,
         name: impl Into<String>,
-        registry: Arc<NodeRegistry>,
         js_library: Arc<JsNodeLibrary>,
     ) -> Self {
         Self {
             id: id.into(),
             name: name.into(),
-            registry,
             js_library,
             js_runtimes: DashMap::new(),
             blueprints: Arc::new(DashMap::new()),
@@ -90,7 +83,6 @@ impl BlueprintExecutor {
         let state = BlueprintState {
             blueprint,
             variables: HashMap::new(),
-            active: false,
         };
         self.blueprints.insert(id, state);
     }
@@ -218,8 +210,8 @@ impl BlueprintExecutor {
         // Load each node (need to get fresh ref for each await)
         for node_type in &js_node_types {
             if let Some(def) = self.js_library.get(node_type) {
-                // Get mutable ref, check if loaded, then load
-                let mut runtime = self.js_runtimes.get_mut(blueprint_id).ok_or_else(|| {
+                // Get ref, check if loaded, then load
+                let runtime = self.js_runtimes.get(blueprint_id).ok_or_else(|| {
                     ServiceError::Internal("Runtime disappeared".to_string())
                 })?;
 
@@ -313,17 +305,12 @@ impl Service for BlueprintExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::register_builtin_nodes;
 
     #[test]
     fn test_create_executor() {
-        let mut registry = NodeRegistry::new();
-        register_builtin_nodes(&mut registry);
-
         let executor = BlueprintExecutor::new(
             "test-executor",
             "Test Executor",
-            Arc::new(registry),
             Arc::new(JsNodeLibrary::new()),
         );
 
@@ -332,13 +319,9 @@ mod tests {
 
     #[test]
     fn test_load_blueprint() {
-        let mut registry = NodeRegistry::new();
-        register_builtin_nodes(&mut registry);
-
         let mut executor = BlueprintExecutor::new(
             "test-executor",
             "Test Executor",
-            Arc::new(registry),
             Arc::new(JsNodeLibrary::new()),
         );
 

@@ -3,8 +3,6 @@
 //! Watches project files for changes and broadcasts updates.
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::Duration;
 
 use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
@@ -166,7 +164,7 @@ impl ProjectWatcher {
         match ProjectLoader::reload_device(&self.project_path, device_id).await {
             Ok(Some(device)) => {
                 // Update in project state
-                if let Some(project) = self.state.project().await {
+                if let Some(_project) = self.state.project().await {
                     // Note: We'd need mutable access to update the project
                     // For now, we just broadcast the change
                     let data = serde_json::to_value(&device).ok();

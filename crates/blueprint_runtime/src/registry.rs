@@ -49,30 +49,6 @@ where
     }
 }
 
-/// Async function-based node executor
-pub struct AsyncFnNodeExecutor<F, Fut>
-where
-    F: Fn(NodeContext) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = NodeOutput> + Send,
-{
-    func: F,
-    _phantom: std::marker::PhantomData<Fut>,
-}
-
-impl<F, Fut> AsyncFnNodeExecutor<F, Fut>
-where
-    F: Fn(NodeContext) -> Fut + Send + Sync,
-    Fut: std::future::Future<Output = NodeOutput> + Send,
-{
-    #[allow(dead_code)]
-    pub fn new(func: F) -> Self {
-        Self {
-            func,
-            _phantom: std::marker::PhantomData,
-        }
-    }
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Node Registry
 // ─────────────────────────────────────────────────────────────────────────────
