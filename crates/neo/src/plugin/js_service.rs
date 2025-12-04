@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use blueprint_runtime::service::{
     Event, Service, ServiceContext, ServiceError, ServiceResult, ServiceSpec,
 };
-use neo_js_runtime::{spawn_runtime, RuntimeHandle, RuntimeServices};
+use neo_js_runtime::{spawn_service_runtime, RuntimeHandle, RuntimeServices, ServiceMode};
 
 /// Configuration for a JavaScript service
 #[derive(Debug, Clone)]
@@ -64,7 +64,7 @@ impl JsServiceConfig {
 /// For periodic work, use setInterval in JavaScript instead of on_tick.
 pub struct JsService {
     config: JsServiceConfig,
-    runtime: Option<Arc<RuntimeHandle>>,
+    runtime: Option<Arc<RuntimeHandle<ServiceMode>>>,
 }
 
 impl JsService {
@@ -97,7 +97,7 @@ impl Service for JsService {
 
         // Spawn the JS runtime with the service code
         // The runtime will load the service and assign it the ID
-        let handle = spawn_runtime(
+        let handle = spawn_service_runtime(
             format!("js:{}", self.config.id),
             self.config.code.clone(),
             self.config.id.clone(),

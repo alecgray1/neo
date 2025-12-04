@@ -7,8 +7,8 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use neo_js_runtime::{
-    spawn_runtime_empty, BlueprintJs, ExecutionResultJs, ExecutionTrigger, RuntimeError,
-    RuntimeHandle, RuntimeServices,
+    spawn_blueprint_runtime, BlueprintJs, BlueprintMode, ExecutionResultJs, ExecutionTrigger,
+    RuntimeError, RuntimeHandle, RuntimeServices,
 };
 
 /// A JavaScript runtime dedicated to a single blueprint.
@@ -17,8 +17,8 @@ use neo_js_runtime::{
 /// All JS nodes in the blueprint share this runtime, reducing memory usage and
 /// startup time compared to one runtime per node.
 pub struct BlueprintJsRuntime {
-    /// The underlying V8 runtime handle
-    handle: Arc<RuntimeHandle>,
+    /// The underlying V8 runtime handle (typed for blueprint operations)
+    handle: Arc<RuntimeHandle<BlueprintMode>>,
     /// Blueprint ID this runtime belongs to
     blueprint_id: String,
     /// Set of node type IDs that have been loaded
@@ -31,7 +31,7 @@ impl BlueprintJsRuntime {
     /// This spawns a new V8 isolate in its own OS thread.
     pub fn new(blueprint_id: &str, services: RuntimeServices) -> Result<Self, RuntimeError> {
         let name = format!("blueprint:{}", blueprint_id);
-        let handle = spawn_runtime_empty(name, services)?;
+        let handle = spawn_blueprint_runtime(name, services)?;
 
         Ok(Self {
             handle: Arc::new(handle),

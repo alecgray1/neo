@@ -7,6 +7,39 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Execution trigger
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Trigger for blueprint execution.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionTrigger {
+    /// Type of trigger: "start" or "event"
+    #[serde(rename = "type")]
+    pub trigger_type: String,
+    /// Optional data associated with the trigger
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl ExecutionTrigger {
+    /// Create a "start" trigger (used for initial blueprint execution).
+    pub fn start() -> Self {
+        Self {
+            trigger_type: "start".to_string(),
+            data: None,
+        }
+    }
+
+    /// Create an "event" trigger with associated data.
+    pub fn event(data: serde_json::Value) -> Self {
+        Self {
+            trigger_type: "event".to_string(),
+            data: Some(data),
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Blueprint types for JS execution
 // ─────────────────────────────────────────────────────────────────────────────
 
