@@ -9,7 +9,6 @@ path = "src/blueprint_runtime.rs"
 doctest = false
 
 [dependencies]
-blueprint_types.workspace = true
 neo-js-runtime.workspace = true
 
 serde.workspace = true

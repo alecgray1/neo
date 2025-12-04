@@ -349,7 +349,6 @@ name = "blueprint_runtime"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "blueprint_types",
  "dashmap",
  "neo-js-runtime",
  "rand",
@@ -358,18 +357,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "blueprint_types"
-version = "0.1.0"
-dependencies = [
- "dashmap",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -1450,7 +1437,6 @@ dependencies = [
  "axum",
  "bacnet",
  "blueprint_runtime",
- "blueprint_types",
  "chrono",
  "clap",
  "config",
@@ -1482,7 +1468,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "blueprint_types",
  "deno_core",
  "futures",
  "serde",

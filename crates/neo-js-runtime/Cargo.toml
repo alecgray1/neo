@@ -14,7 +14,6 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 futures = "0.3"
-blueprint_types = { path = "../blueprint_types" }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }

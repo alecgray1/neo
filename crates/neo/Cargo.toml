@@ -14,7 +14,6 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal blueprint crates
-blueprint_types.workspace = true
 blueprint_runtime.workspace = true
 neo-js-runtime.workspace = true
 

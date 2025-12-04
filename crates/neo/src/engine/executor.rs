@@ -11,17 +11,18 @@ use dashmap::DashMap;
 use blueprint_runtime::service::{
     Event, Service, ServiceContext, ServiceError, ServiceResult, ServiceSpec,
 };
-use blueprint_runtime::{BlueprintJsRuntime, ExecutionTrigger, JsNodeLibrary};
-use blueprint_types::Blueprint;
+use blueprint_runtime::{BlueprintJs, BlueprintJsRuntime, BlueprintNodeJs, ConnectionJs, ExecutionTrigger, JsNodeLibrary};
 use neo_js_runtime::RuntimeServices;
+
+use crate::project::BlueprintConfig;
 
 /// State of a running blueprint execution
 #[derive(Debug)]
-pub struct BlueprintState {
-    /// The blueprint being executed
-    pub blueprint: Blueprint,
+struct BlueprintState {
+    /// The blueprint config
+    config: BlueprintConfig,
     /// Current variable values
-    pub variables: HashMap<String, serde_json::Value>,
+    variables: HashMap<String, serde_json::Value>,
 }
 
 /// Blueprint Executor Service
@@ -77,11 +78,11 @@ impl BlueprintExecutor {
     /// The JS runtime is created on-demand when the blueprint is first executed.
     /// Built-in nodes are already registered in the JS runtime; only plugin nodes
     /// need to be loaded.
-    pub fn load_blueprint(&mut self, blueprint: Blueprint) {
-        let id = blueprint.id.clone();
+    pub fn load_blueprint(&mut self, config: BlueprintConfig) {
+        let id = config.id.clone();
 
         let state = BlueprintState {
-            blueprint,
+            config,
             variables: HashMap::new(),
         };
         self.blueprints.insert(id, state);
@@ -95,12 +96,12 @@ impl BlueprintExecutor {
     /// - Evaluating pure nodes on demand
     /// - Flow control (branches, loops, sequences)
     pub async fn execute_blueprint(&self, blueprint_id: &str, trigger: &str) -> ServiceResult<()> {
-        // Get the blueprint
-        let blueprint = {
+        // Get the blueprint config
+        let config = {
             let state = self.blueprints.get(blueprint_id).ok_or_else(|| {
                 ServiceError::Internal(format!("Blueprint not found: {}", blueprint_id))
             })?;
-            state.blueprint.clone()
+            state.config.clone()
         };
 
         tracing::debug!(
@@ -113,7 +114,10 @@ impl BlueprintExecutor {
         self.ensure_runtime_exists(blueprint_id)?;
 
         // Load any plugin JS nodes this blueprint uses
-        self.load_plugin_nodes_for_blueprint(blueprint_id, &blueprint).await?;
+        self.load_plugin_nodes_for_blueprint(blueprint_id, &config).await?;
+
+        // Convert config to BlueprintJs
+        let blueprint_js = Self::config_to_js(&config);
 
         // Set the blueprint for execution (must drop ref before await)
         {
@@ -121,7 +125,7 @@ impl BlueprintExecutor {
                 ServiceError::Internal("Runtime disappeared".to_string())
             })?;
             runtime
-                .set_blueprint_for_execution(&blueprint)
+                .set_blueprint_for_execution(blueprint_js)
                 .await
                 .map_err(|e| ServiceError::Internal(format!("Failed to set blueprint: {}", e)))?;
         }
@@ -187,18 +191,38 @@ impl BlueprintExecutor {
         }
     }
 
+    /// Convert BlueprintConfig to BlueprintJs for JS execution.
+    fn config_to_js(config: &BlueprintConfig) -> BlueprintJs {
+        BlueprintJs {
+            id: config.id.clone(),
+            name: config.name.clone(),
+            nodes: config
+                .nodes
+                .iter()
+                .filter_map(|v| serde_json::from_value::<BlueprintNodeJs>(v.clone()).ok())
+                .collect(),
+            connections: config
+                .connections
+                .iter()
+                .filter_map(|v| serde_json::from_value::<ConnectionJs>(v.clone()).ok())
+                .collect(),
+            variables: HashMap::new(),
+        }
+    }
+
     /// Load any plugin JS nodes that a blueprint uses.
     async fn load_plugin_nodes_for_blueprint(
         &self,
         blueprint_id: &str,
-        blueprint: &Blueprint,
+        config: &BlueprintConfig,
     ) -> ServiceResult<()> {
         // Collect node types that need loading
-        let js_node_types: Vec<_> = blueprint
+        let js_node_types: Vec<_> = config
             .nodes
             .iter()
-            .filter(|n| self.js_library.contains(&n.node_type))
-            .map(|n| n.node_type.clone())
+            .filter_map(|v| v.get("type").and_then(|t| t.as_str()))
+            .filter(|t| self.js_library.contains(t))
+            .map(|t| t.to_string())
             .collect::<std::collections::HashSet<_>>()
             .into_iter()
             .collect();
@@ -325,8 +349,15 @@ mod tests {
             Arc::new(JsNodeLibrary::new()),
         );
 
-        let blueprint = Blueprint::new("test-bp", "Test Blueprint");
-        executor.load_blueprint(blueprint);
+        let config = BlueprintConfig {
+            id: "test-bp".to_string(),
+            name: "Test Blueprint".to_string(),
+            description: None,
+            nodes: vec![],
+            connections: vec![],
+            metadata: serde_json::Value::Null,
+        };
+        executor.load_blueprint(config);
 
         assert_eq!(executor.blueprint_count(), 1);
     }

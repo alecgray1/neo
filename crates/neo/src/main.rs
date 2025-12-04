@@ -14,7 +14,6 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 use blueprint_runtime::service::ServiceManager;
 use blueprint_runtime::JsNodeLibrary;
-use blueprint_types::{Blueprint, TypeRegistry};
 
 use neo::engine::BlueprintExecutor;
 use neo::plugin::{JsService, JsServiceConfig};
@@ -78,10 +77,9 @@ async fn async_main() -> Result<()> {
 
     // Create core components
     let service_manager = Arc::new(ServiceManager::new());
-    let type_registry = Arc::new(TypeRegistry::new());
 
     // Create application state
-    let state = AppState::new(service_manager.clone(), type_registry);
+    let state = AppState::new(service_manager.clone());
 
     // Load project from default path
     let project_path = &args.project;
@@ -184,9 +182,7 @@ async fn start_blueprint_executor(
 
     // Load each blueprint (this creates JS runtimes for blueprints with JS nodes)
     for (id, config) in blueprints {
-        // Convert BlueprintConfig to Blueprint
-        let blueprint = blueprint_from_config(id, config);
-        executor.load_blueprint(blueprint);
+        executor.load_blueprint(config.clone());
         info!("Loaded blueprint: {} ({})", config.name, id);
     }
 
@@ -208,38 +204,6 @@ async fn start_blueprint_executor(
             error!("Failed to start blueprint executor: {}", e);
         }
     }
-}
-
-/// Convert BlueprintConfig (from project file) to Blueprint (runtime type)
-fn blueprint_from_config(id: &str, config: &BlueprintConfig) -> Blueprint {
-    let mut blueprint = Blueprint::new(id, &config.name);
-
-    if let Some(desc) = &config.description {
-        blueprint.description = Some(desc.clone());
-    }
-
-    // Convert nodes from JSON
-    for node_value in &config.nodes {
-        if let Ok(node) = serde_json::from_value(node_value.clone()) {
-            blueprint.nodes.push(node);
-        } else {
-            warn!("Failed to parse node in blueprint {}: {:?}", id, node_value);
-        }
-    }
-
-    // Convert connections from JSON
-    for conn_value in &config.connections {
-        if let Ok(conn) = serde_json::from_value(conn_value.clone()) {
-            blueprint.connections.push(conn);
-        } else {
-            warn!(
-                "Failed to parse connection in blueprint {}: {:?}",
-                id, conn_value
-            );
-        }
-    }
-
-    blueprint
 }
 
 /// Load plugin node definitions into the JS node library

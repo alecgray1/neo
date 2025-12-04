@@ -12,7 +12,6 @@ use uuid::Uuid;
 use wildmatch::WildMatch;
 
 use blueprint_runtime::service::ServiceManager;
-use blueprint_types::TypeRegistry;
 
 use crate::project::{BlueprintConfig, Project};
 use crate::plugin::{JsService, JsServiceConfig};
@@ -34,9 +33,6 @@ struct AppStateInner {
 
     /// Service manager
     service_manager: Arc<ServiceManager>,
-
-    /// Type registry
-    type_registry: Arc<TypeRegistry>,
 
     /// Connected clients
     clients: DashMap<Uuid, ClientState>,
@@ -63,7 +59,7 @@ pub struct ClientState {
 
 impl AppState {
     /// Create new application state
-    pub fn new(service_manager: Arc<ServiceManager>, type_registry: Arc<TypeRegistry>) -> Self {
+    pub fn new(service_manager: Arc<ServiceManager>) -> Self {
         let (broadcast_tx, _) = broadcast::channel(256);
 
         Self {
@@ -71,7 +67,6 @@ impl AppState {
                 project: RwLock::new(None),
                 project_path: RwLock::new(None),
                 service_manager,
-                type_registry,
                 clients: DashMap::new(),
                 dev_plugins: DashMap::new(),
                 broadcast_tx,
@@ -121,11 +116,6 @@ impl AppState {
     /// Get the service manager
     pub fn service_manager(&self) -> &Arc<ServiceManager> {
         &self.inner.service_manager
-    }
-
-    /// Get the type registry
-    pub fn type_registry(&self) -> &Arc<TypeRegistry> {
-        &self.inner.type_registry
     }
 
     /// Register a new client connection

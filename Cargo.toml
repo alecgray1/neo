@@ -3,7 +3,6 @@ resolver = "2"
 members = [
   "crates/neo",
   "crates/neo-js-runtime",
-  "crates/blueprint_types",
   "crates/blueprint_runtime",
 ]
 default-members = ["crates/neo"]
@@ -14,7 +13,6 @@ publish = false
 
 [workspace.dependencies]
 # Internal crates
-blueprint_types = { path = "crates/blueprint_types" }
 blueprint_runtime = { path = "crates/blueprint_runtime" }
 neo-js-runtime = { path = "crates/neo-js-runtime" }
 

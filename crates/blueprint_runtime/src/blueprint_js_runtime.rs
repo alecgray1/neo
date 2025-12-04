@@ -10,7 +10,6 @@ use neo_js_runtime::{
     spawn_runtime_empty, BlueprintJs, ExecutionResultJs, ExecutionTrigger, RuntimeError,
     RuntimeHandle, RuntimeServices,
 };
-use blueprint_types::Blueprint;
 
 /// A JavaScript runtime dedicated to a single blueprint.
 ///
@@ -130,11 +129,9 @@ impl BlueprintJsRuntime {
 
     /// Set the blueprint for JS-driven execution.
     ///
-    /// This converts the Blueprint to BlueprintJs format and stores it
-    /// for the JS execution loop to use.
-    pub async fn set_blueprint_for_execution(&self, blueprint: &Blueprint) -> Result<(), RuntimeError> {
-        let blueprint_js = BlueprintJs::from_blueprint(blueprint);
-        self.handle.set_blueprint_for_execution(blueprint_js).await
+    /// Takes a pre-built BlueprintJs and stores it for the JS execution loop.
+    pub async fn set_blueprint_for_execution(&self, blueprint: BlueprintJs) -> Result<(), RuntimeError> {
+        self.handle.set_blueprint_for_execution(blueprint).await
     }
 
     /// Execute the loaded blueprint using the JS-driven execution loop.

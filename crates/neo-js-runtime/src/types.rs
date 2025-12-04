@@ -47,37 +47,6 @@ pub struct ConnectionJs {
     pub to: String,
 }
 
-impl BlueprintJs {
-    /// Create from a blueprint_types::Blueprint
-    pub fn from_blueprint(bp: &blueprint_types::Blueprint) -> Self {
-        Self {
-            id: bp.id.clone(),
-            name: bp.name.clone(),
-            nodes: bp
-                .nodes
-                .iter()
-                .map(|n| BlueprintNodeJs {
-                    id: n.id.clone(),
-                    node_type: n.node_type.clone(),
-                    config: n.config.clone(),
-                })
-                .collect(),
-            connections: bp
-                .connections
-                .iter()
-                .map(|c| ConnectionJs {
-                    from: c.from.clone(),
-                    to: c.to.clone(),
-                })
-                .collect(),
-            variables: bp
-                .variables
-                .iter()
-                .map(|(k, v)| (k.clone(), v.default.clone().unwrap_or(serde_json::Value::Null)))
-                .collect(),
-        }
-    }
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Execution result types
