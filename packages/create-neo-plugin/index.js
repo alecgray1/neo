@@ -80,11 +80,9 @@ interface ServiceContext {
 
 interface ServiceConfig {
   name: string;
-  tickInterval?: number;
   subscriptions?: string[];
   onStart?: (ctx: ServiceContext) => Promise<void>;
   onStop?: (ctx: ServiceContext) => Promise<void>;
-  onTick?: (ctx: ServiceContext) => Promise<void>;
   onEvent?: (ctx: ServiceContext, event: NeoEvent) => Promise<void>;
 }
 
@@ -148,20 +146,24 @@ declare const Neo: {
 const mainServiceTs = `// Main Service - the primary service for this plugin
 export default defineService({
   name: "${pluginName} Service",
-  tickInterval: 5000, // Tick every 5 seconds
 
   onStart: async (ctx) => {
     ctx.state.count = 0;
     Neo.log.info("${pluginName} service started!");
+
+    // Use setInterval for periodic work
+    ctx.state.intervalId = setInterval(() => {
+      ctx.state.count = (ctx.state.count as number) + 1;
+      Neo.log.debug("${pluginName} tick #" + ctx.state.count);
+    }, 5000);
   },
 
   onStop: async (ctx) => {
+    // Clean up the interval
+    if (ctx.state.intervalId) {
+      clearInterval(ctx.state.intervalId as number);
+    }
     Neo.log.info("${pluginName} service stopped after " + ctx.state.count + " ticks");
-  },
-
-  onTick: async (ctx) => {
-    ctx.state.count = (ctx.state.count as number) + 1;
-    Neo.log.debug("${pluginName} tick #" + ctx.state.count);
   },
 });
 `;

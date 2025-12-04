@@ -78,9 +78,6 @@ pub enum ServiceCommand {
 
     /// Request current service state
     GetState(oneshot::Sender<ServiceState>),
-
-    /// Force an immediate tick (for testing)
-    ForceTick,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -144,14 +141,6 @@ impl ServiceHandle {
     pub async fn shutdown(&self) -> ServiceResult<()> {
         self.command_tx
             .send(ServiceCommand::Shutdown)
-            .await
-            .map_err(|_| ServiceError::NotRunning(self.service_id.clone()))
-    }
-
-    /// Force an immediate tick
-    pub async fn force_tick(&self) -> ServiceResult<()> {
-        self.command_tx
-            .send(ServiceCommand::ForceTick)
             .await
             .map_err(|_| ServiceError::NotRunning(self.service_id.clone()))
     }

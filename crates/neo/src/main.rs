@@ -14,6 +14,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 
 use blueprint_runtime::NodeRegistry;
 use blueprint_runtime::service::ServiceManager;
+use blueprint_runtime::JsNodeLibrary;
 use blueprint_types::{Blueprint, TypeRegistry};
 
 use neo::engine::{BlueprintExecutor, register_builtin_nodes};
@@ -79,7 +80,6 @@ async fn async_main() -> Result<()> {
     // Create node registry and register built-in nodes
     let mut node_registry = NodeRegistry::new();
     register_builtin_nodes(&mut node_registry);
-    let node_registry = Arc::new(node_registry);
 
     // Create core components
     let service_manager = Arc::new(ServiceManager::new());
@@ -96,17 +96,28 @@ async fn async_main() -> Result<()> {
         Ok(project) => {
             info!("Loaded project: {} ({})", project.name(), project.id());
 
+            // Load JS node definitions into library (no runtimes created yet)
+            let mut js_library = JsNodeLibrary::new();
+            if !project.plugins.is_empty() {
+                load_plugin_definitions(&mut js_library, &project.plugins).await;
+            }
+            let js_library = Arc::new(js_library);
+
+            // Now make the registry immutable
+            let node_registry = Arc::new(node_registry);
+
             // Start blueprint executor if we have blueprints and it's not disabled
             if !args.no_blueprints && !project.blueprints.is_empty() {
                 start_blueprint_executor(
                     &service_manager,
                     node_registry.clone(),
+                    js_library.clone(),
                     &project.blueprints,
                 )
                 .await;
             }
 
-            // Start plugins
+            // Start plugin services
             if !project.plugins.is_empty() {
                 start_plugins(&service_manager, &project.plugins).await;
             }
@@ -171,19 +182,30 @@ async fn async_main() -> Result<()> {
 async fn start_blueprint_executor(
     service_manager: &ServiceManager,
     node_registry: Arc<NodeRegistry>,
+    js_library: Arc<JsNodeLibrary>,
     blueprints: &std::collections::HashMap<String, BlueprintConfig>,
 ) {
-    // Create executor
-    let mut executor =
-        BlueprintExecutor::new("blueprint-executor", "Blueprint Executor", node_registry);
+    // Create executor with both Rust node registry and JS node library
+    let mut executor = BlueprintExecutor::new(
+        "blueprint-executor",
+        "Blueprint Executor",
+        node_registry,
+        js_library,
+    );
 
-    // Load each blueprint
+    // Load each blueprint (this creates JS runtimes for blueprints with JS nodes)
     for (id, config) in blueprints {
         // Convert BlueprintConfig to Blueprint
         let blueprint = blueprint_from_config(id, config);
         executor.load_blueprint(blueprint);
         info!("Loaded blueprint: {} ({})", config.name, id);
     }
+
+    info!(
+        "Blueprint executor has {} JS runtimes for {} blueprints",
+        executor.js_runtime_count(),
+        executor.blueprint_count()
+    );
 
     // Spawn the service
     match service_manager.spawn(executor).await {
@@ -231,6 +253,36 @@ fn blueprint_from_config(id: &str, config: &BlueprintConfig) -> Blueprint {
     blueprint
 }
 
+/// Load plugin node definitions into the JS node library
+///
+/// This loads the JavaScript code for each node type but does NOT create any
+/// V8 runtimes. Runtimes are created per-blueprint when blueprints are loaded.
+async fn load_plugin_definitions(
+    library: &mut JsNodeLibrary,
+    plugins: &std::collections::HashMap<String, LoadedPlugin>,
+) {
+    for (_plugin_id, plugin) in plugins {
+        for node_entry in &plugin.manifest.nodes {
+            // Read the node's JavaScript chunk
+            let entry_path = plugin.manifest_dir.join(&node_entry.entry);
+            let code = match tokio::fs::read_to_string(&entry_path).await {
+                Ok(code) => code,
+                Err(e) => {
+                    error!(
+                        "Failed to read node code for {}: {} (path: {})",
+                        node_entry.id, e, entry_path.display()
+                    );
+                    continue;
+                }
+            };
+
+            // Register the code in the library (no runtime created yet)
+            library.register(node_entry.id.clone(), code);
+            info!("Loaded JS node definition: {}", node_entry.id);
+        }
+    }
+}
+
 /// Start all loaded plugins
 ///
 /// Each service from the plugin manifest is loaded as a separate JsService
@@ -268,17 +320,12 @@ async fn start_plugins(
             };
 
             // Create service config from manifest entry
-            let mut config = JsServiceConfig::new(
+            let config = JsServiceConfig::new(
                 &service_entry.id,
                 &service_entry.id, // Use ID as name for now
                 code,
             )
             .with_subscriptions(service_entry.subscriptions.clone());
-
-            // Add tick interval if specified in manifest
-            if let Some(tick_ms) = service_entry.tick_interval {
-                config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
-            }
 
             let service = JsService::new(config);
 

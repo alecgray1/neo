@@ -1,0 +1,43 @@
+{
+  "id": "plugin-test",
+  "name": "Plugin Node Test",
+  "description": "Tests plugin nodes (example/add) in a blueprint",
+  "nodes": [
+    {
+      "id": "start",
+      "type": "event/OnStart",
+      "position": { "x": 0, "y": 100 },
+      "config": {}
+    },
+    {
+      "id": "const-a",
+      "type": "utility/Constant",
+      "position": { "x": 200, "y": 50 },
+      "config": { "value": 10 }
+    },
+    {
+      "id": "const-b",
+      "type": "utility/Constant",
+      "position": { "x": 200, "y": 150 },
+      "config": { "value": 32 }
+    },
+    {
+      "id": "add",
+      "type": "example/add",
+      "position": { "x": 400, "y": 100 },
+      "config": {}
+    },
+    {
+      "id": "print",
+      "type": "utility/Print",
+      "position": { "x": 600, "y": 100 },
+      "config": {}
+    }
+  ],
+  "connections": [
+    { "from": "start.exec", "to": "print.exec" },
+    { "from": "const-a.value", "to": "add.a" },
+    { "from": "const-b.value", "to": "add.b" },
+    { "from": "add.sum", "to": "print.message" }
+  ]
+}

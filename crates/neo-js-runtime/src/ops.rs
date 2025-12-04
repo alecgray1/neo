@@ -7,12 +7,25 @@
 //! access them directly - no RPC back to a host thread needed.
 
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use deno_core::op2;
 use deno_core::OpState;
 
+use crate::types::BlueprintJs;
 use crate::{Event, RuntimeServices};
+
+/// State for blueprint execution.
+///
+/// Stored in OpState and accessed by ops during execution.
+#[derive(Default)]
+pub struct BlueprintExecutionState {
+    /// The current blueprint being executed (set before calling executeBlueprint)
+    pub current_blueprint: Option<BlueprintJs>,
+    /// Current variable values (mutable during execution)
+    pub variables: HashMap<String, serde_json::Value>,
+}
 
 /// Synchronous logging op - writes to the Rust tracing system.
 #[op2(fast)]
@@ -106,9 +119,76 @@ pub fn op_event_emit(
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Blueprint Execution Ops
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Get the current blueprint for execution.
+/// Returns the blueprint that was set via `set_blueprint_for_execution`.
+#[op2]
+#[serde]
+pub fn op_get_blueprint(state: &mut OpState) -> Option<BlueprintJs> {
+    state
+        .try_borrow::<BlueprintExecutionState>()
+        .and_then(|s| s.current_blueprint.clone())
+}
+
+/// Get a variable value.
+#[op2]
+#[serde]
+pub fn op_get_variable(
+    state: &mut OpState,
+    #[string] name: String,
+) -> Option<serde_json::Value> {
+    state
+        .try_borrow::<BlueprintExecutionState>()
+        .and_then(|s| s.variables.get(&name).cloned())
+}
+
+/// Set a variable value.
+#[op2]
+pub fn op_set_variable(
+    state: &mut OpState,
+    #[string] name: String,
+    #[serde] value: serde_json::Value,
+) -> Result<(), deno_core::error::AnyError> {
+    if let Some(exec_state) = state.try_borrow_mut::<BlueprintExecutionState>() {
+        exec_state.variables.insert(name, value);
+        Ok(())
+    } else {
+        Err(deno_core::error::generic_error(
+            "Blueprint execution state not available",
+        ))
+    }
+}
+
+/// Get all current variable values.
+#[op2]
+#[serde]
+pub fn op_get_all_variables(state: &mut OpState) -> HashMap<String, serde_json::Value> {
+    state
+        .try_borrow::<BlueprintExecutionState>()
+        .map(|s| s.variables.clone())
+        .unwrap_or_default()
+}
+
 deno_core::extension!(
     neo_runtime,
-    ops = [op_log, op_now, op_point_read, op_point_write, op_event_emit],
+    ops = [
+        op_log,
+        op_now,
+        op_point_read,
+        op_point_write,
+        op_event_emit,
+        // Blueprint execution ops
+        op_get_blueprint,
+        op_get_variable,
+        op_set_variable,
+        op_get_all_variables,
+    ],
     esm_entry_point = "ext:neo_runtime/bootstrap.js",
     esm = [dir "src", "bootstrap.js"],
+    state = |state| {
+        state.put(BlueprintExecutionState::default());
+    },
 );

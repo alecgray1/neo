@@ -9,7 +9,6 @@
 //! - `on_start`: Called when the service starts
 //! - `on_stop`: Called when the service stops
 //! - `on_event`: Called when an event matching subscriptions arrives
-//! - `on_tick`: Called periodically if tick_interval is set
 
 mod event;
 mod handle;
@@ -69,10 +68,6 @@ pub struct ServiceSpec {
     /// Human-readable name
     pub name: String,
 
-    /// Optional tick interval for periodic on_tick calls
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tick_interval: Option<Duration>,
-
     /// Event patterns this service subscribes to (e.g., "PointValueChanged", "Device/*")
     #[serde(default)]
     pub subscriptions: Vec<String>,
@@ -103,7 +98,6 @@ impl Default for ServiceSpec {
         Self {
             id: String::new(),
             name: String::new(),
-            tick_interval: None,
             subscriptions: Vec::new(),
             singleton: true,
             shutdown_timeout: Duration::from_secs(30),
@@ -120,12 +114,6 @@ impl ServiceSpec {
             name: name.into(),
             ..Default::default()
         }
-    }
-
-    /// Set tick interval
-    pub fn with_tick_interval(mut self, interval: Duration) -> Self {
-        self.tick_interval = Some(interval);
-        self
     }
 
     /// Add event subscriptions
@@ -252,13 +240,6 @@ pub trait Service: Send + Sync + 'static {
     async fn on_event(&mut self, _ctx: &ServiceContext, _event: Event) -> ServiceResult<()> {
         Ok(())
     }
-
-    /// Called periodically if tick_interval is set in the spec
-    ///
-    /// Override this to perform periodic tasks. The default implementation does nothing.
-    async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-        Ok(())
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -273,7 +254,6 @@ mod tests {
         started: bool,
         stopped: bool,
         events_received: usize,
-        ticks: usize,
     }
 
     impl TestService {
@@ -282,7 +262,6 @@ mod tests {
                 started: false,
                 stopped: false,
                 events_received: 0,
-                ticks: 0,
             }
         }
     }
@@ -291,7 +270,6 @@ mod tests {
     impl Service for TestService {
         fn spec(&self) -> ServiceSpec {
             ServiceSpec::new("test-service", "Test Service")
-                .with_tick_interval(Duration::from_millis(100))
                 .subscribe("TestEvent")
         }
 
@@ -309,24 +287,17 @@ mod tests {
             self.events_received += 1;
             Ok(())
         }
-
-        async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-            self.ticks += 1;
-            Ok(())
-        }
     }
 
     #[test]
     fn test_service_spec_builder() {
         let spec = ServiceSpec::new("my-service", "My Service")
-            .with_tick_interval(Duration::from_secs(1))
             .subscribe("Event1")
             .subscribe("Event2")
             .singleton(true);
 
         assert_eq!(spec.id, "my-service");
         assert_eq!(spec.name, "My Service");
-        assert_eq!(spec.tick_interval, Some(Duration::from_secs(1)));
         assert_eq!(spec.subscriptions, vec!["Event1", "Event2"]);
         assert!(spec.singleton);
     }

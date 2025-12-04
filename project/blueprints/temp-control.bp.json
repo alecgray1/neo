@@ -5,12 +5,12 @@
   "nodes": [
     {
       "config": {},
-      "id": "event-tick",
+      "id": "event-start",
       "position": {
         "x": -60,
         "y": 240
       },
-      "type": "event/OnTick"
+      "type": "event/OnStart"
     },
     {
       "config": {
@@ -73,7 +73,7 @@
   ],
   "connections": [
     {
-      "from": "event-tick.exec",
+      "from": "event-start.exec",
       "to": "branch.exec"
     },
     {

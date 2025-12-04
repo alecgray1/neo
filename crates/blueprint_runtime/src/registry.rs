@@ -119,6 +119,23 @@ impl NodeRegistry {
         self.register(definition, Arc::new(FnNodeExecutor::new(func)));
     }
 
+    /// Register a plugin node executor with a minimal definition
+    ///
+    /// Plugin nodes define their metadata in JavaScript, so we create a placeholder
+    /// definition on the Rust side. The actual pins/category come from the JS.
+    pub fn register_plugin(&mut self, id: &str, executor: Arc<dyn NodeExecutor>) {
+        let definition = NodeDef {
+            id: id.to_string(),
+            name: id.split('/').last().unwrap_or(id).to_string(),
+            category: "Plugin".to_string(),
+            pure: false,
+            latent: false,
+            description: Some(format!("Plugin node: {}", id)),
+            pins: vec![], // Pins are defined in JS, not visible here
+        };
+        self.register(definition, executor);
+    }
+
     /// Get a node definition by ID
     pub fn get_definition(&self, id: &str) -> Option<&NodeDef> {
         self.nodes.get(id).map(|e| &e.definition)

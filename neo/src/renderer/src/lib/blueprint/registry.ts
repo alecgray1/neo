@@ -5,10 +5,10 @@ import type { NodeDef, PinDef } from './types'
 const builtInNodes: NodeDef[] = [
   // === Events ===
   {
-    id: 'event/OnTick',
-    name: 'On Tick',
+    id: 'event/OnStart',
+    name: 'On Start',
     category: 'Events',
-    description: 'Triggered every tick',
+    description: 'Triggered when the blueprint starts',
     pins: [
       { name: 'exec', direction: 'output', type: 'Exec', description: 'Execution output' }
     ]

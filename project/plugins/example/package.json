@@ -18,18 +18,19 @@
     "services": [
       {
         "id": "example/watchdog",
-        "entry": "services/watchdog.js",
-        "tickInterval": 10000
+        "entry": "services/watchdog.js"
       },
       {
         "id": "example/ticker",
-        "entry": "services/ticker.js",
-        "tickInterval": 5000
+        "entry": "services/ticker.js"
+      },
+      {
+        "id": "example/printer",
+        "entry": "services/printer.js"
       },
       {
         "id": "example/crasher",
-        "entry": "services/crasher.js",
-        "tickInterval": 3000
+        "entry": "services/crasher.js"
       }
     ],
     "nodes": [

@@ -299,17 +299,13 @@ impl AppState {
             .map_err(|e| format!("Failed to read plugin code: {}", e))?;
 
         // Create and spawn the plugin service
-        let mut config = JsServiceConfig::new(
+        let config = JsServiceConfig::new(
             &registration.id,
             &registration.name,
             code,
         )
         .with_config(registration.config.clone())
         .with_subscriptions(registration.subscriptions.clone());
-
-        if let Some(tick_ms) = registration.tick_interval {
-            config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
-        }
 
         let service = JsService::new(config);
 
@@ -353,17 +349,13 @@ impl AppState {
             .map_err(|e| format!("Failed to read plugin code: {}", e))?;
 
         // Restart with updated code
-        let mut config = JsServiceConfig::new(
+        let config = JsServiceConfig::new(
             &registration.id,
             &registration.name,
             code,
         )
         .with_config(registration.config.clone())
         .with_subscriptions(registration.subscriptions.clone());
-
-        if let Some(tick_ms) = registration.tick_interval {
-            config = config.with_tick_interval(std::time::Duration::from_millis(tick_ms));
-        }
 
         let service = JsService::new(config);
 

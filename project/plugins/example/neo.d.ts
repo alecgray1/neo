@@ -7,11 +7,9 @@ interface ServiceContext {
 
 interface ServiceConfig {
   name: string;
-  tickInterval?: number;
   subscriptions?: string[];
   onStart?: (ctx: ServiceContext) => Promise<void>;
   onStop?: (ctx: ServiceContext) => Promise<void>;
-  onTick?: (ctx: ServiceContext) => Promise<void>;
   onEvent?: (ctx: ServiceContext, event: NeoEvent) => Promise<void>;
 }
 

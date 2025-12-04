@@ -9,23 +9,53 @@
 //! - Each service runs in a dedicated runtime thread
 //! - One service per runtime (no multi-service files)
 //! - Services use `export default defineService({...})` pattern
-//! - Commands are executed via V8CrossThreadTaskSpawner (Deno's pattern)
+//! - Commands are sent via channel, event loop runs until completion (like Deno)
 
 mod ops;
+mod types;
 
 pub use ops::neo_runtime;
+pub use ops::BlueprintExecutionState;
+pub use types::{BlueprintJs, BlueprintNodeJs, ConnectionJs, ExecutionResultJs};
 
-use std::future::poll_fn;
+/// Trigger for blueprint execution.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ExecutionTrigger {
+    /// Type of trigger: "start" or "event"
+    #[serde(rename = "type")]
+    pub trigger_type: String,
+    /// Optional data associated with the trigger
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
+}
+
+impl ExecutionTrigger {
+    pub fn start() -> Self {
+        Self {
+            trigger_type: "start".to_string(),
+            data: None,
+        }
+    }
+
+    pub fn event(data: serde_json::Value) -> Self {
+        Self {
+            trigger_type: "event".to_string(),
+            data: Some(data),
+        }
+    }
+}
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::thread;
 
+use deno_core::serde_v8;
 use deno_core::v8;
 use deno_core::JsRuntime;
 use deno_core::PollEventLoopOptions;
 use deno_core::RuntimeOptions;
-use deno_core::V8CrossThreadTaskSpawner;
+use tokio::sync::{mpsc, oneshot, watch};
 
 /// Ensure V8 platform is initialized exactly once.
 static V8_INIT: Once = Once::new();
@@ -42,75 +72,141 @@ pub fn init_platform() {
     });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime Commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Commands sent to the runtime worker thread.
+enum RuntimeCommand {
+    /// Execute a blueprint and return the result
+    ExecuteBlueprint {
+        trigger: ExecutionTrigger,
+        reply: oneshot::Sender<Result<ExecutionResultJs, String>>,
+    },
+    /// Set the blueprint for execution
+    SetBlueprint {
+        blueprint: BlueprintJs,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Load a node definition into the registry
+    LoadNode {
+        node_id: String,
+        code: String,
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Execute the loaded node (single-node mode)
+    ExecuteNode {
+        context_json: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// Execute a node by ID from the registry (multi-node mode)
+    ExecuteNodeById {
+        node_id: String,
+        context_json: String,
+        reply: oneshot::Sender<Result<serde_json::Value, String>>,
+    },
+    /// Check if a node exists in the registry
+    HasNode {
+        node_id: String,
+        reply: oneshot::Sender<Result<bool, String>>,
+    },
+    /// Start the loaded service
+    StartService {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+    /// Stop the loaded service
+    StopService {
+        reply: oneshot::Sender<Result<(), String>>,
+    },
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime Handle
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Handle to a spawned JavaScript runtime.
 ///
 /// Each runtime contains exactly one service or node definition.
-/// Commands are executed via the V8CrossThreadTaskSpawner.
+/// Commands are sent via channel, and the event loop runs until completion.
 pub struct RuntimeHandle {
-    /// Spawner for executing tasks on the V8 event loop from this thread.
-    spawner: V8CrossThreadTaskSpawner,
-    /// Whether the runtime has terminated.
+    /// Command sender
+    cmd_tx: mpsc::Sender<RuntimeCommand>,
+    /// Shutdown signal sender
+    shutdown_tx: watch::Sender<bool>,
+    /// Whether the runtime has terminated
     terminated: Arc<AtomicBool>,
-    /// V8 isolate handle for forced termination.
+    /// V8 isolate handle for forced termination
     isolate_handle: v8::IsolateHandle,
-    /// Thread join handle.
+    /// Thread join handle
     thread_handle: std::sync::Mutex<Option<thread::JoinHandle<Result<(), RuntimeError>>>>,
 }
 
 impl RuntimeHandle {
-    /// Execute the loaded node and wait for the result.
-    pub fn execute_node(&self, context_json: &str) -> Result<String, RuntimeError> {
+    /// Helper to send a command and wait for reply
+    async fn send_command<T, F>(&self, make_cmd: F) -> Result<T, RuntimeError>
+    where
+        F: FnOnce(oneshot::Sender<Result<T, String>>) -> RuntimeCommand,
+    {
         if self.terminated.load(Ordering::SeqCst) {
             return Err(RuntimeError::Terminated);
         }
 
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(make_cmd(reply_tx))
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?;
+
+        reply_rx
+            .await
+            .map_err(|_| RuntimeError::ChannelClosed)?
+            .map_err(RuntimeError::JavaScript)
+    }
+
+    /// Execute a blueprint and wait for the result.
+    pub async fn execute_blueprint(&self, trigger: ExecutionTrigger) -> Result<ExecutionResultJs, RuntimeError> {
+        self.send_command(|reply| RuntimeCommand::ExecuteBlueprint { trigger, reply }).await
+    }
+
+    /// Set the blueprint for execution.
+    pub async fn set_blueprint_for_execution(&self, blueprint: BlueprintJs) -> Result<(), RuntimeError> {
+        self.send_command(|reply| RuntimeCommand::SetBlueprint { blueprint, reply }).await
+    }
+
+    /// Execute the loaded node (single-node mode).
+    pub async fn execute_node(&self, context_json: &str) -> Result<serde_json::Value, RuntimeError> {
+        let context = context_json.to_string();
+        self.send_command(|reply| RuntimeCommand::ExecuteNode { context_json: context, reply }).await
+    }
+
+    /// Load a node definition into the runtime's node registry.
+    pub async fn load_node(&self, node_id: &str, code: &str) -> Result<(), RuntimeError> {
+        let node_id = node_id.to_string();
+        let code = code.to_string();
+        self.send_command(|reply| RuntimeCommand::LoadNode { node_id, code, reply }).await
+    }
+
+    /// Execute a node by ID from the registry.
+    pub async fn execute_node_by_id(&self, node_id: &str, context_json: &str) -> Result<serde_json::Value, RuntimeError> {
+        let node_id = node_id.to_string();
         let context_json = context_json.to_string();
+        self.send_command(|reply| RuntimeCommand::ExecuteNodeById { node_id, context_json, reply }).await
+    }
 
-        // Use spawn_blocking to execute on the V8 thread and wait for result
-        let result = self.spawner.spawn_blocking(move |scope| {
-            execute_node_inner(scope, &context_json)
-        });
-
-        result.map_err(RuntimeError::JavaScript)
+    /// Check if a node is registered in the runtime's node registry.
+    pub async fn has_node(&self, node_id: &str) -> Result<bool, RuntimeError> {
+        let node_id = node_id.to_string();
+        self.send_command(|reply| RuntimeCommand::HasNode { node_id, reply }).await
     }
 
     /// Start the loaded service (calls onStart).
-    pub fn start_service(&self) -> Result<(), RuntimeError> {
-        if self.terminated.load(Ordering::SeqCst) {
-            return Err(RuntimeError::Terminated);
-        }
-
-        let result = self.spawner.spawn_blocking(|scope| {
-            call_service_lifecycle_inner(scope, "startService")
-        });
-
-        result.map_err(RuntimeError::JavaScript)
+    pub async fn start_service(&self) -> Result<(), RuntimeError> {
+        self.send_command(|reply| RuntimeCommand::StartService { reply }).await
     }
 
     /// Stop the loaded service (calls onStop).
-    pub fn stop_service(&self) -> Result<(), RuntimeError> {
-        if self.terminated.load(Ordering::SeqCst) {
-            return Err(RuntimeError::Terminated);
-        }
-
-        let result = self.spawner.spawn_blocking(|scope| {
-            call_service_lifecycle_inner(scope, "stopService")
-        });
-
-        result.map_err(RuntimeError::JavaScript)
-    }
-
-    /// Tick the loaded service (calls onTick).
-    pub fn tick_service(&self) -> Result<(), RuntimeError> {
-        if self.terminated.load(Ordering::SeqCst) {
-            return Err(RuntimeError::Terminated);
-        }
-
-        let result = self.spawner.spawn_blocking(|scope| {
-            call_service_lifecycle_inner(scope, "tickService")
-        });
-
-        result.map_err(RuntimeError::JavaScript)
+    pub async fn stop_service(&self) -> Result<(), RuntimeError> {
+        self.send_command(|reply| RuntimeCommand::StopService { reply }).await
     }
 
     /// Terminate the runtime.
@@ -118,6 +214,8 @@ impl RuntimeHandle {
         if self.terminated.swap(true, Ordering::SeqCst) {
             return; // Already terminated
         }
+        // Signal shutdown - this will wake the worker's select!
+        let _ = self.shutdown_tx.send(true);
         // Force terminate V8 execution if it's stuck
         self.isolate_handle.terminate_execution();
     }
@@ -139,16 +237,25 @@ impl RuntimeHandle {
 impl Drop for RuntimeHandle {
     fn drop(&mut self) {
         self.terminate();
+        // Wait for the thread to finish to ensure clean V8 shutdown
+        if let Some(handle) = self.thread_handle.lock().unwrap().take() {
+            let _ = handle.join();
+        }
     }
 }
 
 // SAFETY: RuntimeHandle is designed to be used from multiple threads.
-// - V8CrossThreadTaskSpawner has an unsafe impl Send
+// - mpsc::Sender is Send + Sync
+// - watch::Sender is Send + Sync
 // - v8::IsolateHandle is documented as Send + Sync
 // - Arc<AtomicBool> is Send + Sync
 // - Mutex<Option<JoinHandle>> is Send + Sync
 unsafe impl Send for RuntimeHandle {}
 unsafe impl Sync for RuntimeHandle {}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Errors
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Errors that can occur in the runtime.
 #[derive(Debug, thiserror::Error)]
@@ -165,9 +272,11 @@ pub enum RuntimeError {
     SpawnFailed(#[from] std::io::Error),
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Services
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Services that can be accessed from JavaScript.
-///
-/// These are passed as Arc into the runtime and stored in OpState.
 #[derive(Clone, Default)]
 pub struct RuntimeServices {
     /// Event publisher for emitting events from JS
@@ -179,20 +288,10 @@ pub struct RuntimeServices {
 /// Trait for point value storage.
 #[async_trait::async_trait]
 pub trait PointStore: Send + Sync + 'static {
-    /// Read the current value of a point.
     async fn read(&self, point_id: &str) -> Result<Option<serde_json::Value>, PointError>;
-
-    /// Write a value to a point.
     async fn write(&self, point_id: &str, value: serde_json::Value) -> Result<(), PointError>;
 }
 
-impl Clone for Box<dyn PointStore> {
-    fn clone(&self) -> Self {
-        panic!("Cannot clone Box<dyn PointStore> - use Arc instead")
-    }
-}
-
-/// Errors from point operations.
 #[derive(Debug, thiserror::Error)]
 pub enum PointError {
     #[error("Point not found: {0}")]
@@ -210,12 +309,10 @@ pub struct EventPublisher {
 }
 
 impl EventPublisher {
-    /// Create a new event publisher.
     pub fn new(tx: tokio::sync::broadcast::Sender<crate::Event>) -> Self {
         Self { tx }
     }
 
-    /// Emit an event.
     pub fn emit(&self, event: crate::Event) -> Result<(), RuntimeError> {
         self.tx
             .send(event)
@@ -227,18 +324,13 @@ impl EventPublisher {
 /// An event that can be published.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct Event {
-    /// Event type identifier
     pub event_type: String,
-    /// Source that generated the event
     pub source: String,
-    /// Event payload
     pub data: serde_json::Value,
-    /// Timestamp (Unix milliseconds)
     pub timestamp: u64,
 }
 
 impl Event {
-    /// Create a new event with current timestamp.
     pub fn new(event_type: impl Into<String>, source: impl Into<String>, data: serde_json::Value) -> Self {
         Self {
             event_type: event_type.into(),
@@ -252,15 +344,32 @@ impl Event {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Spawn Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Spawn a new JavaScript runtime for a single service/node.
-///
-/// The `code` should use `export default defineService({...})` or `defineNode({...})`.
-/// The `service_id` is the full ID (e.g., "example/ticker") that will be assigned
-/// to the loaded definition.
 pub fn spawn_runtime(
     name: String,
     code: String,
     service_id: String,
+    services: RuntimeServices,
+) -> Result<RuntimeHandle, RuntimeError> {
+    spawn_runtime_inner(name, Some((code, service_id)), services)
+}
+
+/// Spawn a new empty JavaScript runtime for multi-node mode.
+pub fn spawn_runtime_empty(
+    name: String,
+    services: RuntimeServices,
+) -> Result<RuntimeHandle, RuntimeError> {
+    spawn_runtime_inner(name, None, services)
+}
+
+/// Internal spawn function.
+fn spawn_runtime_inner(
+    name: String,
+    initial_code: Option<(String, String)>,
     services: RuntimeServices,
 ) -> Result<RuntimeHandle, RuntimeError> {
     tracing::debug!("[spawn_runtime] Starting for {}", name);
@@ -269,11 +378,14 @@ pub fn spawn_runtime(
     let terminated = Arc::new(AtomicBool::new(false));
     let terminated_clone = terminated.clone();
 
-    // Channel to receive spawner and isolate handle from the worker thread
-    let (init_tx, init_rx) = std::sync::mpsc::sync_channel::<Result<(V8CrossThreadTaskSpawner, v8::IsolateHandle), String>>(1);
+    // Command channel
+    let (cmd_tx, cmd_rx) = mpsc::channel::<RuntimeCommand>(32);
 
-    // Channel to signal that the event loop is ready to process tasks
-    let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<()>(1);
+    // Shutdown signal (watch channel - multiple receivers can subscribe)
+    let (shutdown_tx, shutdown_rx) = watch::channel(false);
+
+    // Channel to receive isolate handle from the worker thread
+    let (init_tx, init_rx) = std::sync::mpsc::sync_channel::<Result<v8::IsolateHandle, String>>(1);
 
     let name_clone = name.clone();
     let thread_handle = thread::Builder::new()
@@ -290,52 +402,51 @@ pub fn spawn_runtime(
             // Run the worker
             let result = rt.block_on(run_worker(
                 name_clone.clone(),
-                code,
-                service_id,
+                initial_code,
                 services,
                 terminated_clone,
+                cmd_rx,
+                shutdown_rx,
                 init_tx,
-                ready_tx,
             ));
 
-            // Force shutdown any lingering tasks
             rt.shutdown_background();
-
             tracing::debug!("[spawn_runtime:{}] Thread exiting", name_clone);
             result
         })?;
 
-    // Wait for initialization (spawner and isolate handle)
-    let (spawner, isolate_handle) = init_rx
+    // Wait for initialization
+    let isolate_handle = init_rx
         .recv()
         .map_err(|_| RuntimeError::ChannelClosed)?
         .map_err(RuntimeError::JavaScript)?;
 
-    // Wait for the event loop to be ready to process tasks
-    // This ensures start_service() won't be called before the event loop is polling
-    let _ = ready_rx.recv();
-
     tracing::debug!("[spawn_runtime] {} is ready", name);
 
     Ok(RuntimeHandle {
-        spawner,
+        cmd_tx,
+        shutdown_tx,
         terminated,
         isolate_handle,
         thread_handle: std::sync::Mutex::new(Some(thread_handle)),
     })
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Worker Loop
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// The main worker loop that runs inside the spawned thread.
 async fn run_worker(
     name: String,
-    code: String,
-    service_id: String,
+    initial_code: Option<(String, String)>,
     services: RuntimeServices,
     terminated: Arc<AtomicBool>,
-    init_tx: std::sync::mpsc::SyncSender<Result<(V8CrossThreadTaskSpawner, v8::IsolateHandle), String>>,
-    ready_tx: std::sync::mpsc::SyncSender<()>,
+    mut cmd_rx: mpsc::Receiver<RuntimeCommand>,
+    mut shutdown_rx: watch::Receiver<bool>,
+    init_tx: std::sync::mpsc::SyncSender<Result<v8::IsolateHandle, String>>,
 ) -> Result<(), RuntimeError> {
-    // Create the JsRuntime (serialize creation to avoid V8 crashes)
+    // Create the JsRuntime
     let mut js_runtime = {
         let _lock = ISOLATE_CREATE_LOCK.lock().unwrap();
         tracing::debug!("[run_worker:{}] Creating JsRuntime", name);
@@ -345,162 +456,472 @@ async fn run_worker(
         })
     };
 
-    // Get the cross-thread spawner and isolate handle
-    let spawner = js_runtime
-        .op_state()
-        .borrow()
-        .borrow::<V8CrossThreadTaskSpawner>()
-        .clone();
     let isolate_handle = js_runtime.v8_isolate().thread_safe_handle();
 
-    // Store services in OpState for ops to access
+    // Store services in OpState
     {
         let op_state = js_runtime.op_state();
         let mut state = op_state.borrow_mut();
         state.put(services);
     }
 
-    // Execute plugin code (the chunk with defineService/defineNode)
-    let script_name: &'static str = Box::leak(format!("<service:{}>", name).into_boxed_str());
-    tracing::debug!("[run_worker:{}] Executing service code", name);
+    // Load initial code if provided
+    if let Some((code, service_id)) = initial_code {
+        let script_name: &'static str = Box::leak(format!("<service:{}>", name).into_boxed_str());
+        tracing::debug!("[run_worker:{}] Executing service code", name);
 
-    // Wrap the code to capture the default export and register it
-    let wrapped_code = format!(
-        r#"
-        const __module = (() => {{
-            {}
-        }})();
+        let wrapped_code = format!(
+            r#"
+            const __module = (() => {{
+                {}
+            }})();
+            const __def = __module || globalThis.__getLastDefinition();
+            if (__def && typeof __def === 'object') {{
+                globalThis.__neo_internal.setLoadedDefinition(__def, {});
+            }} else {{
+                throw new Error("Service chunk must call defineService({{...}}) or defineNode({{...}})");
+            }}
+            "#,
+            code.replace("export default", "return"),
+            serde_json::to_string(&service_id).unwrap()
+        );
 
-        // Try to get the definition from either:
-        // 1. The return value (if export default was present)
-        // 2. The __getLastDefinition() fallback (if Vite stripped export default)
-        const __def = __module || globalThis.__getLastDefinition();
+        if let Err(e) = js_runtime.execute_script(script_name, wrapped_code) {
+            let _ = init_tx.send(Err(e.to_string()));
+            return Err(RuntimeError::JavaScript(e.to_string()));
+        }
 
-        if (__def && typeof __def === 'object') {{
-            globalThis.__neo_internal.setLoadedDefinition(__def, {});
-        }} else {{
-            throw new Error("Service chunk must call defineService({{...}}) or defineNode({{...}})");
-        }}
-        "#,
-        code.replace("export default", "return"),
-        serde_json::to_string(&service_id).unwrap()
-    );
+        // Run event loop to complete initialization
+        if let Err(e) = js_runtime.run_event_loop(PollEventLoopOptions::default()).await {
+            let _ = init_tx.send(Err(e.to_string()));
+            return Err(RuntimeError::JavaScript(e.to_string()));
+        }
 
-    if let Err(e) = js_runtime.execute_script(script_name, wrapped_code) {
-        let _ = init_tx.send(Err(e.to_string()));
-        return Err(RuntimeError::JavaScript(e.to_string()));
+        tracing::debug!("[run_worker:{}] Service loaded successfully", name);
+    } else {
+        tracing::debug!("[run_worker:{}] Empty runtime ready", name);
     }
 
-    // Run event loop to complete any async initialization
-    if let Err(e) = js_runtime.run_event_loop(Default::default()).await {
-        let _ = init_tx.send(Err(e.to_string()));
-        return Err(RuntimeError::JavaScript(e.to_string()));
-    }
+    // Send isolate handle to host
+    let _ = init_tx.send(Ok(isolate_handle));
 
-    tracing::debug!("[run_worker:{}] Service loaded successfully", name);
+    // Track if we're in "service mode" (running event loop continuously)
+    let mut service_running = false;
 
-    // Send the spawner and isolate handle to the host
-    let _ = init_tx.send(Ok((spawner, isolate_handle)));
+    // Command loop - use select! to wait for commands OR shutdown
+    loop {
+        // Check shutdown first
+        if *shutdown_rx.borrow() || terminated.load(Ordering::SeqCst) {
+            tracing::debug!("[run_worker:{}] Shutdown signal received", name);
+            break;
+        }
 
-    // Signal that the event loop is about to start polling
-    // This ensures the host won't call start_service() before we're ready
-    let _ = ready_tx.send(());
+        if service_running {
+            // Service mode: poll event loop while checking for commands/shutdown
+            tokio::select! {
+                biased;  // Check shutdown first
 
-    // Main event loop - just keep polling until terminated
-    // Commands will be injected via the V8CrossThreadTaskSpawner
-    while !terminated.load(Ordering::SeqCst) {
-        // Poll the event loop - this will process any spawned tasks
-        match poll_fn(|cx| js_runtime.poll_event_loop(cx, PollEventLoopOptions::default())).await {
-            Ok(()) => {
-                // Event loop completed (no pending work)
-                // Sleep briefly to avoid busy-spinning when idle
-                tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::debug!("[run_worker:{}] Received shutdown signal during service", name);
+                        break;
+                    }
+                }
+
+                // Check for commands (non-blocking via try_recv style with timeout)
+                cmd = cmd_rx.recv() => {
+                    if let Some(cmd) = cmd {
+                        match cmd {
+                            RuntimeCommand::StopService { reply } => {
+                                let result = call_service_stop(&mut js_runtime).await;
+                                let _ = reply.send(result);
+                                service_running = false;
+                            }
+                            _ => {
+                                tracing::warn!("[run_worker:{}] Unexpected command during service run", name);
+                            }
+                        }
+                    } else {
+                        break; // Channel closed
+                    }
+                }
+
+                // Run event loop for a short time to process timers
+                _ = run_event_loop_tick(&mut js_runtime) => {
+                    // Event loop tick completed, continue loop
+                }
             }
-            Err(e) => {
-                tracing::error!("[run_worker:{}] Event loop error: {}", name, e);
-                // Don't exit on errors - the runtime might still be usable
+        } else {
+            // Normal mode: wait for commands
+            tokio::select! {
+                _ = shutdown_rx.changed() => {
+                    if *shutdown_rx.borrow() {
+                        tracing::debug!("[run_worker:{}] Received shutdown signal", name);
+                        break;
+                    }
+                }
+
+                cmd = cmd_rx.recv() => {
+                    let cmd = match cmd {
+                        Some(cmd) => cmd,
+                        None => {
+                            tracing::debug!("[run_worker:{}] Command channel closed", name);
+                            break;
+                        }
+                    };
+
+                    match cmd {
+                        RuntimeCommand::ExecuteBlueprint { trigger, reply } => {
+                            let result = execute_blueprint(&mut js_runtime, trigger).await;
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::SetBlueprint { blueprint, reply } => {
+                            let result = set_blueprint(&mut js_runtime, blueprint);
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::LoadNode { node_id, code, reply } => {
+                            let result = load_node(&mut js_runtime, &node_id, &code).await;
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::ExecuteNode { context_json, reply } => {
+                            let result = execute_node(&mut js_runtime, &context_json).await;
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::ExecuteNodeById { node_id, context_json, reply } => {
+                            let result = execute_node_by_id(&mut js_runtime, &node_id, &context_json).await;
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::HasNode { node_id, reply } => {
+                            let result = has_node(&mut js_runtime, &node_id);
+                            let _ = reply.send(result);
+                        }
+
+                        RuntimeCommand::StartService { reply } => {
+                            let result = call_service_start(&mut js_runtime).await;
+                            let ok = result.is_ok();
+                            let _ = reply.send(result);
+                            if ok {
+                                service_running = true;
+                            }
+                        }
+
+                        RuntimeCommand::StopService { reply } => {
+                            let result = call_service_stop(&mut js_runtime).await;
+                            let _ = reply.send(result);
+                        }
+                    }
+                }
             }
         }
     }
 
-    tracing::debug!("[run_worker:{}] Event loop finished", name);
+    tracing::debug!("[run_worker:{}] Worker finished", name);
     Ok(())
 }
 
-/// Execute a node within a V8 scope (called from spawn_blocking).
-fn execute_node_inner(scope: &mut v8::HandleScope, context_json: &str) -> Result<String, String> {
+// ─────────────────────────────────────────────────────────────────────────────
+// JS Execution Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Execute a blueprint with the event loop running until completion.
+async fn execute_blueprint(
+    js_runtime: &mut JsRuntime,
+    trigger: ExecutionTrigger,
+) -> Result<ExecutionResultJs, String> {
+    let trigger_json = serde_json::to_string(&trigger)
+        .map_err(|e| format!("Failed to serialize trigger: {}", e))?;
+
     let script = format!(
         r#"(async () => {{
-            const result = await globalThis.__neo_internal.executeNode({});
-            return JSON.stringify(result);
+            const trigger = {};
+            return await globalThis.__neo_internal.executeBlueprint(trigger);
+        }})()"#,
+        trigger_json
+    );
+
+    // Execute the script
+    let result = js_runtime
+        .execute_script("<blueprint>", script)
+        .map_err(|e| e.to_string())?;
+
+    // Run event loop until the promise resolves
+    js_runtime
+        .run_event_loop(PollEventLoopOptions::default())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Now get the result from the resolved promise
+    let scope = &mut js_runtime.handle_scope();
+    let local = v8::Local::new(scope, result);
+
+    if let Ok(promise) = v8::Local::<v8::Promise>::try_from(local) {
+        match promise.state() {
+            v8::PromiseState::Fulfilled => {
+                let value = promise.result(scope);
+                serde_v8::from_v8(scope, value)
+                    .map_err(|e| format!("Failed to deserialize result: {}", e))
+            }
+            v8::PromiseState::Rejected => {
+                let value = promise.result(scope);
+                let err_str: String = serde_v8::from_v8(scope, value)
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                Err(err_str)
+            }
+            v8::PromiseState::Pending => {
+                Err("Promise still pending after event loop".to_string())
+            }
+        }
+    } else {
+        serde_v8::from_v8(scope, local)
+            .map_err(|e| format!("Failed to deserialize result: {}", e))
+    }
+}
+
+/// Set the blueprint for execution.
+fn set_blueprint(js_runtime: &mut JsRuntime, blueprint: BlueprintJs) -> Result<(), String> {
+    let script = format!(
+        r#"globalThis.__neo_current_blueprint = {};"#,
+        serde_json::to_string(&blueprint).map_err(|e| e.to_string())?
+    );
+
+    js_runtime
+        .execute_script("<set_blueprint>", script)
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Execute the loaded node (single-node mode).
+async fn execute_node(
+    js_runtime: &mut JsRuntime,
+    context_json: &str,
+) -> Result<serde_json::Value, String> {
+    let script = format!(
+        r#"(async () => {{
+            return await globalThis.__neo_internal.executeNode({});
         }})()"#,
         context_json
     );
 
-    let source = v8::String::new(scope, &script).unwrap();
-    let script = v8::Script::compile(scope, source, None)
-        .ok_or_else(|| "Failed to compile script".to_string())?;
+    let result = js_runtime
+        .execute_script("<execute_node>", script)
+        .map_err(|e| e.to_string())?;
 
-    let result = script.run(scope)
-        .ok_or_else(|| "Script execution failed".to_string())?;
+    js_runtime
+        .run_event_loop(PollEventLoopOptions::default())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // If it's a promise, we need to handle it
-    if let Ok(promise) = v8::Local::<v8::Promise>::try_from(result) {
+    let scope = &mut js_runtime.handle_scope();
+    let local = v8::Local::new(scope, result);
+
+    if let Ok(promise) = v8::Local::<v8::Promise>::try_from(local) {
         match promise.state() {
             v8::PromiseState::Fulfilled => {
                 let value = promise.result(scope);
-                Ok(value.to_rust_string_lossy(scope))
+                serde_v8::from_v8(scope, value)
+                    .map_err(|e| format!("Failed to deserialize result: {}", e))
             }
             v8::PromiseState::Rejected => {
                 let value = promise.result(scope);
-                Err(value.to_rust_string_lossy(scope))
+                let err_str: String = serde_v8::from_v8(scope, value)
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                Err(err_str)
             }
             v8::PromiseState::Pending => {
-                // Promise is pending - this is a problem since spawn_blocking is sync
-                Err("Promise is pending - async operations not supported in spawn_blocking".to_string())
+                Err("Promise still pending after event loop".to_string())
             }
         }
     } else {
-        Ok(result.to_rust_string_lossy(scope))
+        serde_v8::from_v8(scope, local)
+            .map_err(|e| format!("Failed to deserialize result: {}", e))
     }
 }
 
-/// Call a service lifecycle method within a V8 scope (called from spawn_blocking).
-fn call_service_lifecycle_inner(scope: &mut v8::HandleScope, method: &str) -> Result<(), String> {
+/// Load a node definition into the runtime's node registry.
+async fn load_node(
+    js_runtime: &mut JsRuntime,
+    node_id: &str,
+    code: &str,
+) -> Result<(), String> {
     let script = format!(
         r#"(async () => {{
-            await globalThis.__neo_internal.{}();
+            const __module = (() => {{
+                {}
+            }})();
+            const __def = __module || globalThis.__getLastDefinition();
+            if (__def && typeof __def === 'object') {{
+                globalThis.__neo_internal.registerNode({}, __def);
+            }} else {{
+                throw new Error("Node code must call defineNode({{...}})");
+            }}
         }})()"#,
-        method
+        code.replace("export default", "return"),
+        serde_json::to_string(node_id).unwrap()
     );
 
-    let source = v8::String::new(scope, &script).unwrap();
-    let script = v8::Script::compile(scope, source, None)
-        .ok_or_else(|| "Failed to compile script".to_string())?;
+    js_runtime
+        .execute_script("<load_node>", script)
+        .map_err(|e| e.to_string())?;
 
-    let result = script.run(scope)
-        .ok_or_else(|| "Script execution failed".to_string())?;
+    js_runtime
+        .run_event_loop(PollEventLoopOptions::default())
+        .await
+        .map_err(|e| e.to_string())?;
 
-    // If it's a promise, check for rejection
-    if let Ok(promise) = v8::Local::<v8::Promise>::try_from(result) {
+    Ok(())
+}
+
+/// Execute a node by ID from the registry.
+async fn execute_node_by_id(
+    js_runtime: &mut JsRuntime,
+    node_id: &str,
+    context_json: &str,
+) -> Result<serde_json::Value, String> {
+    let script = format!(
+        r#"(async () => {{
+            return await globalThis.__neo_internal.executeNodeById({}, {});
+        }})()"#,
+        serde_json::to_string(node_id).unwrap(),
+        context_json
+    );
+
+    let result = js_runtime
+        .execute_script("<execute_node_by_id>", script)
+        .map_err(|e| e.to_string())?;
+
+    js_runtime
+        .run_event_loop(PollEventLoopOptions::default())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let scope = &mut js_runtime.handle_scope();
+    let local = v8::Local::new(scope, result);
+
+    if let Ok(promise) = v8::Local::<v8::Promise>::try_from(local) {
         match promise.state() {
-            v8::PromiseState::Fulfilled => Ok(()),
+            v8::PromiseState::Fulfilled => {
+                let value = promise.result(scope);
+                serde_v8::from_v8(scope, value)
+                    .map_err(|e| format!("Failed to deserialize result: {}", e))
+            }
             v8::PromiseState::Rejected => {
                 let value = promise.result(scope);
-                Err(value.to_rust_string_lossy(scope))
+                let err_str: String = serde_v8::from_v8(scope, value)
+                    .unwrap_or_else(|_| "Unknown error".to_string());
+                Err(err_str)
             }
             v8::PromiseState::Pending => {
-                // Promise is pending - this is a problem since spawn_blocking is sync
-                Err("Promise is pending - async operations not supported in spawn_blocking".to_string())
+                Err("Promise still pending after event loop".to_string())
             }
         }
     } else {
-        Ok(())
+        serde_v8::from_v8(scope, local)
+            .map_err(|e| format!("Failed to deserialize result: {}", e))
     }
 }
 
-#[cfg(test)]
-mod tests {
-    // Tests are in examples/test_runtime.rs to avoid V8 multi-initialization issues
-    // Run with: cargo run -p neo-js-runtime --example test_runtime
+/// Check if a node is registered.
+fn has_node(js_runtime: &mut JsRuntime, node_id: &str) -> Result<bool, String> {
+    let script = format!(
+        r#"globalThis.__neo_internal.hasNode({})"#,
+        serde_json::to_string(node_id).unwrap()
+    );
+
+    let result = js_runtime
+        .execute_script("<has_node>", script)
+        .map_err(|e| e.to_string())?;
+
+    let scope = &mut js_runtime.handle_scope();
+    let local = v8::Local::new(scope, result);
+
+    serde_v8::from_v8(scope, local)
+        .map_err(|e| format!("Failed to deserialize result: {}", e))
+}
+
+/// Run the event loop for a single tick (process pending work without blocking).
+async fn run_event_loop_tick(js_runtime: &mut JsRuntime) {
+    // Run with wait_for_inspector=false to not block
+    let _ = js_runtime
+        .run_event_loop(PollEventLoopOptions {
+            wait_for_inspector: false,
+            pump_v8_message_loop: true,
+        })
+        .await;
+
+    // Small yield to allow other tasks to run
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+}
+
+/// Start a service (calls onStart, but doesn't wait for event loop to drain).
+async fn call_service_start(js_runtime: &mut JsRuntime) -> Result<(), String> {
+    let script = r#"(async () => {
+        await globalThis.__neo_internal.startService();
+    })()"#;
+
+    let promise_global = js_runtime
+        .execute_script("<startService>", script)
+        .map_err(|e| e.to_string())?;
+
+    // Poll until the onStart promise resolves (but not waiting for timers like setInterval)
+    loop {
+        // Check promise state
+        let state = {
+            let scope = &mut js_runtime.handle_scope();
+            let local = v8::Local::new(scope, &promise_global);
+            if let Ok(promise) = v8::Local::<v8::Promise>::try_from(local) {
+                match promise.state() {
+                    v8::PromiseState::Fulfilled => Some(Ok(())),
+                    v8::PromiseState::Rejected => {
+                        let value = promise.result(scope);
+                        let err_str: String = serde_v8::from_v8(scope, value)
+                            .unwrap_or_else(|_| "Unknown error".to_string());
+                        Some(Err(err_str))
+                    }
+                    v8::PromiseState::Pending => None,
+                }
+            } else {
+                // Not a promise, return OK
+                Some(Ok(()))
+            }
+        };
+
+        if let Some(result) = state {
+            return result;
+        }
+
+        // Run one tick of the event loop
+        let _ = js_runtime
+            .run_event_loop(PollEventLoopOptions {
+                wait_for_inspector: false,
+                pump_v8_message_loop: true,
+            })
+            .await;
+
+        tokio::task::yield_now().await;
+    }
+}
+
+/// Stop a service (calls onStop and waits for it to complete).
+async fn call_service_stop(js_runtime: &mut JsRuntime) -> Result<(), String> {
+    let script = r#"(async () => {
+        await globalThis.__neo_internal.stopService();
+    })()"#;
+
+    js_runtime
+        .execute_script("<stopService>", script)
+        .map_err(|e| e.to_string())?;
+
+    // For stop, we DO want to wait for it to complete fully
+    js_runtime
+        .run_event_loop(PollEventLoopOptions::default())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
 }

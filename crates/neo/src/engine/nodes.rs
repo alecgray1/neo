@@ -442,6 +442,29 @@ fn register_comparison_nodes(registry: &mut NodeRegistry) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 fn register_utility_nodes(registry: &mut NodeRegistry) {
+    // Constant - outputs a configured value
+    registry.register_fn(
+        NodeDef {
+            id: "utility/Constant".to_string(),
+            name: "Constant".to_string(),
+            category: "Utility".to_string(),
+            pure: true,
+            latent: false,
+            description: Some("Output a constant value".to_string()),
+            pins: vec![
+                PinDef::data_out("value", PinType::Any),
+            ],
+        },
+        |ctx| {
+            let mut values = HashMap::new();
+            // Get the value from config
+            if let Some(value) = ctx.get_config("value") {
+                values.insert("value".to_string(), value.clone());
+            }
+            NodeOutput::pure(values)
+        },
+    );
+
     // Print/Log
     registry.register_fn(
         NodeDef {
@@ -458,7 +481,15 @@ fn register_utility_nodes(registry: &mut NodeRegistry) {
             ],
         },
         |ctx| {
-            let message = ctx.get_input_string("message").unwrap_or("(empty)");
+            // Convert any input type to string for display
+            let message = match ctx.inputs.get("message") {
+                Some(v) if v.is_string() => v.as_str().unwrap().to_string(),
+                Some(v) if v.is_number() => v.to_string(),
+                Some(v) if v.is_boolean() => v.to_string(),
+                Some(v) if v.is_null() => "null".to_string(),
+                Some(v) => v.to_string(), // Arrays, objects -> JSON
+                None => "(empty)".to_string(),
+            };
             tracing::info!(node_id = %ctx.node_id, "Blueprint: {}", message);
             NodeOutput::continue_to("then", HashMap::new())
         },

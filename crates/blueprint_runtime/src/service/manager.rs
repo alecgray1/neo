@@ -120,7 +120,6 @@ impl ServiceManager {
         let event_rx = self.event_tx.subscribe();
 
         // Spawn the service task
-        let tick_interval = spec.tick_interval;
         let subscriptions = spec.subscriptions.clone();
         let shutdown_timeout = spec.shutdown_timeout;
         let state_clone = Arc::clone(&state);
@@ -133,7 +132,6 @@ impl ServiceManager {
                 shutdown_rx,
                 event_rx,
                 state_clone,
-                tick_interval,
                 subscriptions,
                 shutdown_timeout,
             )
@@ -278,7 +276,6 @@ async fn run_service_loop<S: Service>(
     mut shutdown_rx: broadcast::Receiver<()>,
     mut event_rx: broadcast::Receiver<Event>,
     state: Arc<AtomicU8>,
-    tick_interval: Option<Duration>,
     subscriptions: Vec<String>,
     shutdown_timeout: Duration,
 ) -> ServiceResult<()> {
@@ -300,14 +297,11 @@ async fn run_service_loop<S: Service>(
     state.store(ServiceState::Running as u8, Ordering::SeqCst);
     tracing::info!(service_id = %ctx.service_id, "Service started");
 
-    // Create tick timer if configured
-    let mut tick_timer = tick_interval.map(tokio::time::interval);
-
     // Main event loop
     loop {
         tokio::select! {
-            // Global shutdown signal
-            _ = shutdown_rx.recv() => {
+            // Global shutdown signal - only break on Ok, not on Lagged errors
+            Ok(()) = shutdown_rx.recv() => {
                 tracing::debug!(service_id = %ctx.service_id, "Received global shutdown signal");
                 break;
             }
@@ -332,15 +326,6 @@ async fn run_service_loop<S: Service>(
                         let current = ServiceState::from_u8(state.load(Ordering::SeqCst));
                         let _ = tx.send(current);
                     }
-                    ServiceCommand::ForceTick => {
-                        if let Err(e) = service.on_tick(&ctx).await {
-                            tracing::warn!(
-                                service_id = %ctx.service_id,
-                                error = %e,
-                                "Error during forced tick"
-                            );
-                        }
-                    }
                 }
             }
 
@@ -355,23 +340,6 @@ async fn run_service_loop<S: Service>(
                             "Error handling broadcast event"
                         );
                     }
-                }
-            }
-
-            // Tick timer
-            _ = async {
-                if let Some(ref mut timer) = tick_timer {
-                    timer.tick().await
-                } else {
-                    std::future::pending::<tokio::time::Instant>().await
-                }
-            } => {
-                if let Err(e) = service.on_tick(&ctx).await {
-                    tracing::warn!(
-                        service_id = %ctx.service_id,
-                        error = %e,
-                        "Error during tick"
-                    );
                 }
             }
         }
@@ -462,11 +430,6 @@ mod tests {
 
         async fn on_event(&mut self, _ctx: &ServiceContext, _event: Event) -> ServiceResult<()> {
             self.event_count.fetch_add(1, Ordering::SeqCst);
-            Ok(())
-        }
-
-        async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-            self.tick_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
     }

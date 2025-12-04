@@ -4,10 +4,10 @@
 //! using neo-js-runtime (Deno/V8).
 //!
 //! Each service runs in its own runtime with its own V8 isolate.
-//! Services use `export default defineService({...})` pattern.
+//! The JS runtime handles its own event loop - use setInterval/setTimeout
+//! for periodic work instead of Rust-side ticking.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 
@@ -27,8 +27,6 @@ pub struct JsServiceConfig {
     pub code: String,
     /// Event patterns to subscribe to
     pub subscriptions: Vec<String>,
-    /// Optional tick interval
-    pub tick_interval: Option<Duration>,
     /// Service configuration data
     pub config: serde_json::Value,
 }
@@ -41,7 +39,6 @@ impl JsServiceConfig {
             name: name.into(),
             code: code.into(),
             subscriptions: Vec::new(),
-            tick_interval: None,
             config: serde_json::Value::Object(Default::default()),
         }
     }
@@ -49,12 +46,6 @@ impl JsServiceConfig {
     /// Add event subscriptions
     pub fn with_subscriptions(mut self, subs: Vec<String>) -> Self {
         self.subscriptions = subs;
-        self
-    }
-
-    /// Set tick interval
-    pub fn with_tick_interval(mut self, interval: Duration) -> Self {
-        self.tick_interval = Some(interval);
         self
     }
 
@@ -69,7 +60,8 @@ impl JsServiceConfig {
 ///
 /// Each JsService runs in its own thread with its own V8 isolate.
 /// The JS code should use `export default defineService({...})` with
-/// lifecycle callbacks (onStart, onStop, onTick, onEvent).
+/// lifecycle callbacks (onStart, onStop, onEvent).
+/// For periodic work, use setInterval in JavaScript instead of on_tick.
 pub struct JsService {
     config: JsServiceConfig,
     runtime: Option<Arc<RuntimeHandle>>,
@@ -93,14 +85,8 @@ impl JsService {
 #[async_trait]
 impl Service for JsService {
     fn spec(&self) -> ServiceSpec {
-        let mut spec = ServiceSpec::new(&self.config.id, &self.config.name)
-            .with_subscriptions(self.config.subscriptions.clone());
-
-        if let Some(interval) = self.config.tick_interval {
-            spec = spec.with_tick_interval(interval);
-        }
-
-        spec
+        ServiceSpec::new(&self.config.id, &self.config.name)
+            .with_subscriptions(self.config.subscriptions.clone())
     }
 
     async fn on_start(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
@@ -122,14 +108,10 @@ impl Service for JsService {
         let handle = Arc::new(handle);
 
         // Start the service (calls onStart in JS)
-        // Use spawn_blocking to avoid blocking the async runtime
-        let handle_clone = handle.clone();
-        tokio::task::spawn_blocking(move || {
-            handle_clone.start_service()
-        })
-        .await
-        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?
-        .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
+        handle
+            .start_service()
+            .await
+            .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
 
         self.runtime = Some(handle);
 
@@ -142,10 +124,7 @@ impl Service for JsService {
 
         if let Some(handle) = self.runtime.take() {
             // Stop JS service gracefully (calls onStop in JS)
-            let handle_clone = handle.clone();
-            if let Err(e) = tokio::task::spawn_blocking(move || {
-                handle_clone.stop_service()
-            }).await {
+            if let Err(e) = handle.stop_service().await {
                 tracing::warn!(service = %self.config.id, error = %e, "Error stopping JS service");
             }
 
@@ -164,22 +143,6 @@ impl Service for JsService {
                 event_type = %event.event_type,
                 "JS service received event (handler not yet implemented)"
             );
-        }
-
-        Ok(())
-    }
-
-    async fn on_tick(&mut self, _ctx: &ServiceContext) -> ServiceResult<()> {
-        if let Some(ref handle) = self.runtime {
-            let handle_clone = handle.clone();
-
-            // Tick the service (calls onTick in JS)
-            // Use spawn_blocking to avoid blocking the async runtime
-            if let Err(e) = tokio::task::spawn_blocking(move || {
-                handle_clone.tick_service()
-            }).await {
-                tracing::warn!(service = %self.config.id, error = %e, "Error during JS service tick");
-            }
         }
 
         Ok(())
