@@ -13,10 +13,11 @@ use wildmatch::WildMatch;
 
 use blueprint_runtime::service::ServiceManager;
 
+use crate::bacnet::{BacnetObject, DiscoveredDevice};
 use crate::project::{BlueprintConfig, Project};
 use crate::plugin::{JsService, JsServiceConfig};
 
-use super::protocol::{PluginRegistration, ServerMessage};
+use super::protocol::{ChangeType, PluginRegistration, ServerMessage};
 
 /// Shared application state
 #[derive(Clone)]
@@ -39,6 +40,12 @@ struct AppStateInner {
 
     /// Dev plugins registered via WebSocket (plugin_id -> registration)
     dev_plugins: DashMap<String, PluginRegistration>,
+
+    /// Discovered BACnet devices (device_id -> device info)
+    bacnet_devices: DashMap<u32, DiscoveredDevice>,
+
+    /// BACnet device object lists (device_id -> objects)
+    bacnet_device_objects: DashMap<u32, Vec<BacnetObject>>,
 
     /// Broadcast channel for server-wide notifications
     broadcast_tx: broadcast::Sender<ServerMessage>,
@@ -69,6 +76,8 @@ impl AppState {
                 service_manager,
                 clients: DashMap::new(),
                 dev_plugins: DashMap::new(),
+                bacnet_devices: DashMap::new(),
+                bacnet_device_objects: DashMap::new(),
                 broadcast_tx,
             }),
         }
@@ -267,6 +276,71 @@ impl AppState {
     /// Get the number of connected clients
     pub async fn client_count(&self) -> usize {
         self.inner.clients.len()
+    }
+
+    // ========== BACnet Device Methods ==========
+
+    /// Add or update a discovered BACnet device
+    pub async fn add_bacnet_device(&self, device: DiscoveredDevice) {
+        let device_id = device.device_id;
+        let is_new = !self.inner.bacnet_devices.contains_key(&device_id);
+
+        self.inner.bacnet_devices.insert(device_id, device.clone());
+
+        let change_type = if is_new {
+            ChangeType::Created
+        } else {
+            ChangeType::Updated
+        };
+
+        // Broadcast to subscribers
+        self.broadcast(
+            &format!("/bacnet/devices/{}", device_id),
+            ServerMessage::change(
+                format!("/bacnet/devices/{}", device_id),
+                change_type,
+                Some(serde_json::to_value(&device).unwrap()),
+            ),
+        ).await;
+    }
+
+    /// Get all discovered BACnet devices
+    pub fn get_bacnet_devices(&self) -> Vec<DiscoveredDevice> {
+        self.inner.bacnet_devices
+            .iter()
+            .map(|entry| entry.value().clone())
+            .collect()
+    }
+
+    /// Get a specific BACnet device by ID
+    pub fn get_bacnet_device(&self, device_id: u32) -> Option<DiscoveredDevice> {
+        self.inner.bacnet_devices.get(&device_id).map(|d| d.clone())
+    }
+
+    /// Set the object list for a BACnet device
+    pub async fn set_bacnet_device_objects(&self, device_id: u32, objects: Vec<BacnetObject>) {
+        let object_count = objects.len();
+        self.inner.bacnet_device_objects.insert(device_id, objects.clone());
+
+        // Broadcast to subscribers
+        self.broadcast(
+            &format!("/bacnet/devices/{}/objects", device_id),
+            ServerMessage::change(
+                format!("/bacnet/devices/{}/objects", device_id),
+                ChangeType::Updated,
+                Some(serde_json::json!({
+                    "device_id": device_id,
+                    "objects": objects,
+                })),
+            ),
+        ).await;
+
+        tracing::info!("Stored {} objects for BACnet device {}", object_count, device_id);
+    }
+
+    /// Get the object list for a BACnet device
+    pub fn get_bacnet_device_objects(&self, device_id: u32) -> Option<Vec<BacnetObject>> {
+        self.inner.bacnet_device_objects.get(&device_id).map(|o| o.clone())
     }
 
     /// Send a message to a specific client

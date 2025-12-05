@@ -5,6 +5,7 @@
   import BlueprintEditor from '../../blueprint/BlueprintEditor.svelte'
   import KeybindingsEditor from '../../keybindings/KeybindingsEditor.svelte'
   import SettingsEditor from '../../settings/SettingsEditor.svelte'
+  import BacnetDeviceEditor from '../../bacnet/BacnetDeviceEditor.svelte'
   import { FileText, ChevronRight } from '@lucide/svelte'
   import NeoContextMenu from '../../contextmenu/NeoContextMenu.svelte'
   import { MenuId } from '$lib/menus/menuId'
@@ -92,6 +93,11 @@
           externalUpdateCounter={document.externalUpdateCounter}
           onchange={handleContentChange}
         />
+      </div>
+    {:else if document.language === 'bacnet-device'}
+      <!-- BACnet device viewer -->
+      <div class="flex-1 overflow-hidden">
+        <BacnetDeviceEditor content={document.content} />
       </div>
     {:else}
       <ScrollArea class="flex-1">

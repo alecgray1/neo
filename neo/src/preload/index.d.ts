@@ -131,6 +131,9 @@ export interface ServerAPI {
   // Request/response
   request<T = unknown>(path: string, params?: Record<string, unknown>): Promise<T>
 
+  // Send arbitrary message to server
+  send<T = unknown>(message: Record<string, unknown>): Promise<T>
+
   // Subscriptions
   subscribe(paths: string[]): Promise<void>
   unsubscribe(paths: string[]): Promise<void>

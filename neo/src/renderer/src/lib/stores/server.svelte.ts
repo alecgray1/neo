@@ -33,6 +33,19 @@ export interface Schedule {
   exceptions: unknown[]
 }
 
+export interface BacnetDevice {
+  device_id: number
+  address: string
+  max_apdu: number
+  vendor_id: number
+  segmentation: string
+}
+
+export interface BacnetObject {
+  object_type: string
+  instance: number
+}
+
 export interface Blueprint {
   id: string
   name: string
@@ -58,6 +71,8 @@ function createServerStore() {
   let devices = $state<Device[]>([])
   let blueprints = $state<Blueprint[]>([])
   let schedules = $state<Schedule[]>([])
+  let bacnetDevices = $state<BacnetDevice[]>([])
+  let bacnetDeviceObjects = $state<Map<number, BacnetObject[]>>(new Map())
   let error = $state<string | null>(null)
   let initialized = $state(false)
 
@@ -84,6 +99,15 @@ function createServerStore() {
     },
     get schedules() {
       return schedules
+    },
+    get bacnetDevices() {
+      return bacnetDevices
+    },
+    get bacnetDeviceObjects() {
+      return bacnetDeviceObjects
+    },
+    getBacnetDeviceObjects(deviceId: number): BacnetObject[] {
+      return bacnetDeviceObjects.get(deviceId) ?? []
     },
     get error() {
       return error
@@ -113,6 +137,8 @@ function createServerStore() {
           devices = []
           blueprints = []
           schedules = []
+          bacnetDevices = []
+          bacnetDeviceObjects = new Map()
         }
       })
 
@@ -142,7 +168,7 @@ function createServerStore() {
           // Fetch initial data
           await this.fetchAll()
           // Subscribe to all changes
-          await window.serverAPI.subscribe(['/devices/**', '/blueprints/**', '/schedules/**', '/project'])
+          await window.serverAPI.subscribe(['/devices/**', '/blueprints/**', '/schedules/**', '/bacnet/devices/**', '/project'])
         }
         return success
       } catch (e) {
@@ -157,6 +183,8 @@ function createServerStore() {
       devices = []
       blueprints = []
       schedules = []
+      bacnetDevices = []
+      bacnetDeviceObjects = new Map()
     },
 
     async setConfig(newConfig: Partial<ServerConfig>) {
@@ -166,7 +194,7 @@ function createServerStore() {
 
     // Data fetching
     async fetchAll() {
-      await Promise.all([this.fetchProject(), this.fetchDevices(), this.fetchBlueprints(), this.fetchSchedules()])
+      await Promise.all([this.fetchProject(), this.fetchDevices(), this.fetchBlueprints(), this.fetchSchedules(), this.fetchBacnetDevices()])
     },
 
     async fetchProject() {
@@ -198,6 +226,15 @@ function createServerStore() {
         schedules = (await window.projectAPI.getSchedules()) as Schedule[]
       } catch (e) {
         console.error('Failed to fetch schedules:', e)
+      }
+    },
+
+    async fetchBacnetDevices() {
+      try {
+        bacnetDevices = (await window.serverAPI.request('/bacnet/devices')) as BacnetDevice[]
+      } catch (e) {
+        console.error('Failed to fetch BACnet devices:', e)
+        bacnetDevices = []
       }
     },
 
@@ -252,6 +289,32 @@ function createServerStore() {
             schedules = [...schedules, schedule]
           }
         }
+      } else if (path.startsWith('/bacnet/devices/')) {
+        const parts = path.split('/')
+        const deviceId = parseInt(parts[3], 10)
+
+        // Check if this is an object list update
+        if (parts[4] === 'objects') {
+          if (changeType === 'updated' && data) {
+            const objectData = data as { device_id: number; objects: BacnetObject[] }
+            const newMap = new Map(bacnetDeviceObjects)
+            newMap.set(objectData.device_id, objectData.objects)
+            bacnetDeviceObjects = newMap
+          }
+        } else {
+          // This is a device update
+          if (changeType === 'deleted') {
+            bacnetDevices = bacnetDevices.filter((d) => d.device_id !== deviceId)
+          } else if (changeType === 'created' || changeType === 'updated') {
+            const device = data as BacnetDevice
+            const index = bacnetDevices.findIndex((d) => d.device_id === deviceId)
+            if (index >= 0) {
+              bacnetDevices[index] = device
+            } else {
+              bacnetDevices = [...bacnetDevices, device]
+            }
+          }
+        }
       }
     },
 
@@ -268,6 +331,20 @@ function createServerStore() {
     // Schedule operations
     getSchedule(id: string): Schedule | undefined {
       return schedules.find((s) => s.id === id)
+    },
+
+    // BACnet operations
+    async readBacnetDeviceObjects(deviceId: number): Promise<void> {
+      try {
+        await window.serverAPI.send({
+          type: 'bacnet:readObjects',
+          id: `bacnet-read-objects-${deviceId}-${Date.now()}`,
+          deviceId
+        })
+      } catch (e) {
+        console.error('Failed to request BACnet object list:', e)
+        throw e
+      }
     }
   }
 }

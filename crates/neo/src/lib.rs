@@ -20,3 +20,6 @@ pub mod project;
 
 // WebSocket server
 pub mod server;
+
+// BACnet network service
+pub mod bacnet;

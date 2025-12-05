@@ -110,6 +110,9 @@ async fn handle_client_message(state: &AppState, session_id: Uuid, text: &str) {
         ClientMessage::PluginRebuilt { plugin_id, entry_path } => {
             handle_plugin_rebuilt(state, session_id, &plugin_id, &entry_path).await;
         }
+        ClientMessage::BacnetReadObjects { id, device_id } => {
+            handle_bacnet_read_objects(state, session_id, &id, device_id).await;
+        }
     }
 }
 
@@ -146,6 +149,27 @@ async fn handle_subscribe(state: &AppState, session_id: Uuid, id: &str, paths: V
         }
     }
 
+    // BACnet devices are stored in AppState, not in project
+    for path in &paths {
+        if path == "/bacnet/devices" || path == "/bacnet/devices/*" || path == "/bacnet/devices/**" {
+            let devices = state.get_bacnet_devices();
+            initial_data.insert(
+                "/bacnet/devices".to_string(),
+                serde_json::to_value(&devices).unwrap_or(Value::Null),
+            );
+        } else if path.starts_with("/bacnet/devices/") && !path.contains('*') {
+            let device_id_str = path.trim_start_matches("/bacnet/devices/");
+            if let Ok(device_id) = device_id_str.parse::<u32>() {
+                if let Some(device) = state.get_bacnet_device(device_id) {
+                    initial_data.insert(
+                        path.clone(),
+                        serde_json::to_value(&device).unwrap_or(Value::Null),
+                    );
+                }
+            }
+        }
+    }
+
     let response = ServerMessage::success(
         id,
         Some(serde_json::json!({
@@ -171,6 +195,40 @@ async fn handle_unsubscribe(state: &AppState, session_id: Uuid, id: &str, paths:
 
 /// Handle get request
 async fn handle_get(state: &AppState, session_id: Uuid, id: &str, path: &str) {
+    // Handle BACnet devices separately (stored in AppState, not project)
+    if path == "/bacnet/devices" {
+        let devices = state.get_bacnet_devices();
+        send_to_client(
+            state,
+            session_id,
+            ServerMessage::success(id, Some(serde_json::to_value(devices).unwrap_or(Value::Null))),
+        )
+        .await;
+        return;
+    } else if path.starts_with("/bacnet/devices/") {
+        let device_id_str = path.trim_start_matches("/bacnet/devices/");
+        if let Ok(device_id) = device_id_str.parse::<u32>() {
+            if let Some(device) = state.get_bacnet_device(device_id) {
+                send_to_client(
+                    state,
+                    session_id,
+                    ServerMessage::success(id, Some(serde_json::to_value(device).unwrap_or(Value::Null))),
+                )
+                .await;
+                return;
+            }
+        }
+        send_error(
+            state,
+            session_id,
+            Some(id),
+            ErrorCode::NotFound,
+            format!("BACnet device not found: {}", path),
+        )
+        .await;
+        return;
+    }
+
     let project = match state.project().await {
         Some(p) => p,
         None => {
@@ -432,4 +490,32 @@ async fn handle_plugin_rebuilt(state: &AppState, session_id: Uuid, plugin_id: &s
             .await;
         }
     }
+}
+
+/// Handle BACnet read objects request
+async fn handle_bacnet_read_objects(state: &AppState, session_id: Uuid, id: &str, device_id: u32) {
+    use blueprint_runtime::service::Event;
+
+    tracing::info!(device_id = device_id, "BACnet read objects request");
+
+    // Publish event to the BACnet service
+    let event = Event::new(
+        "bacnet/read-objects",
+        "websocket",
+        serde_json::json!({ "device_id": device_id }),
+    );
+
+    state.service_manager().publish_event(event);
+
+    // Send acknowledgment - actual data will come via subscription
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::success(id, Some(serde_json::json!({
+            "status": "pending",
+            "device_id": device_id,
+            "message": "Object list read in progress"
+        }))),
+    )
+    .await;
 }

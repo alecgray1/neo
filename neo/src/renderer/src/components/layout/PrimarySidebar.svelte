@@ -14,7 +14,8 @@
     Server,
     Cpu,
     Calendar,
-    Workflow
+    Workflow,
+    Radio
   } from '@lucide/svelte'
   import NeoContextMenu from '../contextmenu/NeoContextMenu.svelte'
   import ConnectionDialog from './ConnectionDialog.svelte'
@@ -27,7 +28,7 @@
     type: 'folder' | 'file' | 'server'
     uri?: string
     children?: TreeNode[]
-    icon?: 'device' | 'schedule' | 'blueprint' | 'server'
+    icon?: 'device' | 'schedule' | 'blueprint' | 'server' | 'bacnet'
   }
 
   let showConnectionDialog = $state(false)
@@ -85,6 +86,21 @@
       serverChildren.push(schedulesFolder)
     }
 
+    // BACnet devices folder
+    if (serverStore.bacnetDevices.length > 0) {
+      const bacnetFolder: TreeNode = {
+        name: 'bacnet',
+        type: 'folder',
+        children: serverStore.bacnetDevices.map((device) => ({
+          name: `Device ${device.device_id}`,
+          type: 'file' as const,
+          uri: `neo://bacnet/devices/${device.device_id}`,
+          icon: 'bacnet' as const
+        }))
+      }
+      serverChildren.push(bacnetFolder)
+    }
+
     // Server root node
     const serverNode: TreeNode = {
       name: `${serverStore.config.host}:${serverStore.config.port}`,
@@ -113,6 +129,7 @@
         expandedFolders.add('devices')
         expandedFolders.add('blueprints')
         expandedFolders.add('schedules')
+        expandedFolders.add('bacnet')
         expandedFolders = new Set(expandedFolders)
       }
     }
@@ -219,6 +236,8 @@
         return Calendar
       case 'blueprint':
         return Workflow
+      case 'bacnet':
+        return Radio
       default:
         return FileJson
     }

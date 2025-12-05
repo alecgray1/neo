@@ -95,14 +95,18 @@ impl Service for JsService {
         // Create runtime services (could inject event publisher, point store, etc.)
         let services = RuntimeServices::default();
 
-        // Spawn the JS runtime with the service code
-        // The runtime will load the service and assign it the ID
-        let handle = spawn_service_runtime(
-            format!("js:{}", self.config.id),
-            self.config.code.clone(),
-            self.config.id.clone(),
-            services,
-        )
+        // Capture values for the blocking task
+        let name = format!("js:{}", self.config.id);
+        let code = self.config.code.clone();
+        let id = self.config.id.clone();
+
+        // Spawn the JS runtime in a blocking task to avoid blocking tokio's async workers.
+        // spawn_service_runtime uses std::sync::mpsc which blocks while waiting for V8 init.
+        let handle = tokio::task::spawn_blocking(move || {
+            spawn_service_runtime(name, code, id, services)
+        })
+        .await
+        .map_err(|e| ServiceError::InitializationFailed(format!("spawn task failed: {}", e)))?
         .map_err(|e| ServiceError::InitializationFailed(e.to_string()))?;
 
         let handle = Arc::new(handle);

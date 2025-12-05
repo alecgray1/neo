@@ -15,6 +15,7 @@ use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitEx
 use blueprint_runtime::service::ServiceManager;
 use blueprint_runtime::JsNodeLibrary;
 
+use neo::bacnet::{BacnetConfig, BacnetService};
 use neo::engine::BlueprintExecutor;
 use neo::plugin::{JsService, JsServiceConfig};
 use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
@@ -109,6 +110,18 @@ async fn async_main() -> Result<()> {
             // Start plugin services
             if !project.plugins.is_empty() {
                 start_plugins(&service_manager, &project.plugins).await;
+            }
+
+            // Start BACnet service (reads BACNET_IP, BACNET_PORT, BACNET_BROADCAST from env)
+            let bacnet_config = BacnetConfig::from_env();
+            let bacnet_service = BacnetService::new(bacnet_config, state.clone());
+            match service_manager.spawn(bacnet_service).await {
+                Ok(handle) => {
+                    info!("BACnet service started (service_id: {})", handle.service_id);
+                }
+                Err(e) => {
+                    warn!("Failed to start BACnet service: {}", e);
+                }
             }
 
             // Store project in state

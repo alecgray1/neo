@@ -40,6 +40,7 @@ function createDocumentStore() {
     if (uri.startsWith('neo://devices/')) return 'toml'
     if (uri.startsWith('neo://schedules/')) return 'toml'
     if (uri.startsWith('neo://blueprints/')) return 'blueprint'
+    if (uri.startsWith('neo://bacnet/devices/')) return 'bacnet-device'
 
     // Blueprint files must be checked before generic .json
     if (uri.endsWith('.blueprint.json') || uri.endsWith('.bp.json')) return 'blueprint'
@@ -377,6 +378,19 @@ function createDocumentStore() {
               data = schedule
             }
             name = `${id}.schedule.toml`
+            break
+          }
+          case 'bacnet': {
+            // Handle neo://bacnet/devices/{id}
+            const subPath = id // e.g., "devices/101"
+            if (subPath.startsWith('devices/')) {
+              const deviceId = subPath.replace('devices/', '')
+              data = await window.serverAPI.request(`/bacnet/devices/${deviceId}`)
+              name = `Device ${deviceId}`
+            } else {
+              console.error('Unknown bacnet sub-path:', subPath)
+              return null
+            }
             break
           }
           default:

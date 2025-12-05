@@ -73,6 +73,10 @@ const serverAPI = {
   request: <T = unknown>(path: string, params?: Record<string, unknown>): Promise<T> =>
     ipcRenderer.invoke('server:request', path, params),
 
+  // Send arbitrary message to server
+  send: <T = unknown>(message: Record<string, unknown>): Promise<T> =>
+    ipcRenderer.invoke('server:send', message),
+
   // Subscriptions
   subscribe: (paths: string[]): Promise<void> => ipcRenderer.invoke('server:subscribe', paths),
   unsubscribe: (paths: string[]): Promise<void> => ipcRenderer.invoke('server:unsubscribe', paths),

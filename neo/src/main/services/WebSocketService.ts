@@ -77,6 +77,9 @@ class WebSocketService {
       this.request(path, params)
     )
 
+    // Send arbitrary message to server
+    ipcMain.handle('server:send', (_, message: Record<string, unknown>) => this.send(message))
+
     // Subscriptions
     ipcMain.handle('server:subscribe', (_, paths: string[]) => this.subscribe(paths))
     ipcMain.handle('server:unsubscribe', (_, paths: string[]) => this.unsubscribe(paths))
@@ -259,6 +262,24 @@ class WebSocketService {
     } else {
       message = { type: 'Get', id, path }
     }
+
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingRequests.delete(id)
+        reject(new Error('Request timeout'))
+      }, 30000)
+
+      this.pendingRequests.set(id, { resolve, reject, timeout })
+      this.ws!.send(JSON.stringify(message))
+    })
+  }
+
+  private async send(message: Record<string, unknown>): Promise<unknown> {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      throw new Error('Not connected to server')
+    }
+
+    const id = (message.id as string) || this.generateRequestId()
 
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {

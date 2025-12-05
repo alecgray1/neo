@@ -70,6 +70,14 @@ pub enum ClientMessage {
         #[serde(rename = "entryPath")]
         entry_path: String,
     },
+
+    /// Request to read BACnet device object list
+    #[serde(rename = "bacnet:readObjects")]
+    BacnetReadObjects {
+        id: String,
+        #[serde(rename = "deviceId")]
+        device_id: u32,
+    },
 }
 
 /// Plugin registration data from Vite plugin
