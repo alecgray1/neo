@@ -47,6 +47,10 @@ struct AppStateInner {
     /// BACnet device object lists (device_id -> objects)
     bacnet_device_objects: DashMap<u32, Vec<BacnetObject>>,
 
+    /// BACnet object values (device_id -> (object_key -> value))
+    /// object_key is "object_type:instance" e.g., "analog-input:1"
+    bacnet_object_values: DashMap<u32, DashMap<String, serde_json::Value>>,
+
     /// Broadcast channel for server-wide notifications
     broadcast_tx: broadcast::Sender<ServerMessage>,
 }
@@ -78,6 +82,7 @@ impl AppState {
                 dev_plugins: DashMap::new(),
                 bacnet_devices: DashMap::new(),
                 bacnet_device_objects: DashMap::new(),
+                bacnet_object_values: DashMap::new(),
                 broadcast_tx,
             }),
         }
@@ -341,6 +346,64 @@ impl AppState {
     /// Get the object list for a BACnet device
     pub fn get_bacnet_device_objects(&self, device_id: u32) -> Option<Vec<BacnetObject>> {
         self.inner.bacnet_device_objects.get(&device_id).map(|o| o.clone())
+    }
+
+    /// Set a BACnet object property value
+    pub async fn set_bacnet_object_value(
+        &self,
+        device_id: u32,
+        object_type: &str,
+        instance: u32,
+        property: &str,
+        value: serde_json::Value,
+        timestamp: u64,
+    ) {
+        let object_key = format!("{}:{}", object_type, instance);
+
+        // Get or create the device's value map
+        let device_values = self.inner.bacnet_object_values
+            .entry(device_id)
+            .or_insert_with(DashMap::new);
+
+        // Check if value has changed
+        let value_changed = match device_values.get(&object_key) {
+            Some(existing) => *existing != value,
+            None => true, // New value, always broadcast
+        };
+
+        device_values.insert(object_key.clone(), value.clone());
+
+        // Only broadcast if value changed
+        if value_changed {
+            let path = format!("/bacnet/devices/{}/objects/{}/{}/{}", device_id, object_type, instance, property);
+            self.broadcast(
+                &path,
+                ServerMessage::change(
+                    path.clone(),
+                    ChangeType::Updated,
+                    Some(serde_json::json!({
+                        "device_id": device_id,
+                        "object_type": object_type,
+                        "instance": instance,
+                        "property": property,
+                        "value": value,
+                        "timestamp": timestamp,
+                    })),
+                ),
+            ).await;
+
+            tracing::debug!(
+                "BACnet value changed: device={} {}:{}.{} = {:?}",
+                device_id, object_type, instance, property, value
+            );
+        }
+    }
+
+    /// Get all object values for a device
+    pub fn get_bacnet_device_values(&self, device_id: u32) -> Option<std::collections::HashMap<String, serde_json::Value>> {
+        self.inner.bacnet_object_values.get(&device_id).map(|values| {
+            values.iter().map(|e| (e.key().clone(), e.value().clone())).collect()
+        })
     }
 
     /// Send a message to a specific client

@@ -8,6 +8,18 @@ use std::net::SocketAddr;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+/// Polling state for a device
+struct DevicePollingState {
+    /// Objects to poll (object_type, instance)
+    objects: Vec<(String, u32)>,
+    /// Poll interval
+    interval: Duration,
+    /// Last poll time
+    last_poll: Instant,
+    /// Current index in objects list (for round-robin polling)
+    current_index: usize,
+}
+
 use bacnet::apdu::{pdu_type, unconfirmed_service, service_choice};
 use bacnet::datalink::{BacnetIpDatalink, DataLink};
 use bacnet::npdu::{npdu_decode, npdu_encode, NpduData};
@@ -46,6 +58,8 @@ pub struct BacnetWorker {
     invoke_id: u8,
     /// Pending requests awaiting responses
     pending_requests: HashMap<u8, PendingRequest>,
+    /// Devices being polled
+    polling_devices: HashMap<u32, DevicePollingState>,
 }
 
 impl BacnetWorker {
@@ -76,6 +90,7 @@ impl BacnetWorker {
             device_cache: HashMap::new(),
             invoke_id: 0,
             pending_requests: HashMap::new(),
+            polling_devices: HashMap::new(),
         })
     }
 
@@ -116,6 +131,12 @@ impl BacnetWorker {
                         let _ = self.resp_tx.send(WorkerResponse::Error(e.to_string()));
                     }
                 }
+                Ok(WorkerCommand::StartPolling { device_id, objects, interval_ms }) => {
+                    self.start_polling(device_id, objects, interval_ms);
+                }
+                Ok(WorkerCommand::StopPolling { device_id }) => {
+                    self.stop_polling(device_id);
+                }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     tracing::info!("Command channel disconnected, shutting down");
@@ -128,6 +149,9 @@ impl BacnetWorker {
 
             // Check for request timeouts (10 second timeout)
             self.check_timeouts(Duration::from_secs(10));
+
+            // Execute polling for devices
+            self.do_polling();
         }
 
         tracing::info!("BACnet worker stopped");
@@ -682,5 +706,69 @@ impl BacnetWorker {
         let id = self.invoke_id;
         self.invoke_id = self.invoke_id.wrapping_add(1);
         id
+    }
+
+    /// Start polling values for a device
+    fn start_polling(&mut self, device_id: u32, objects: Vec<(String, u32)>, interval_ms: u64) {
+        if objects.is_empty() {
+            tracing::warn!("Cannot start polling for device {} with no objects", device_id);
+            return;
+        }
+
+        tracing::info!(
+            "Starting polling for device {} ({} objects, {}ms interval)",
+            device_id,
+            objects.len(),
+            interval_ms
+        );
+
+        self.polling_devices.insert(device_id, DevicePollingState {
+            objects,
+            interval: Duration::from_millis(interval_ms),
+            last_poll: Instant::now() - Duration::from_millis(interval_ms), // Trigger immediate first poll
+            current_index: 0,
+        });
+    }
+
+    /// Stop polling for a device
+    fn stop_polling(&mut self, device_id: u32) {
+        if self.polling_devices.remove(&device_id).is_some() {
+            tracing::info!("Stopped polling for device {}", device_id);
+        }
+    }
+
+    /// Execute polling for all devices that need it
+    fn do_polling(&mut self) {
+        let now = Instant::now();
+
+        // Collect devices that need polling to avoid borrow issues
+        let devices_to_poll: Vec<(u32, String, u32)> = self.polling_devices
+            .iter_mut()
+            .filter_map(|(device_id, state)| {
+                if now.duration_since(state.last_poll) >= state.interval {
+                    if state.objects.is_empty() {
+                        return None;
+                    }
+
+                    // Get the current object to poll
+                    let (object_type, instance) = state.objects[state.current_index].clone();
+
+                    // Move to next object for next poll
+                    state.current_index = (state.current_index + 1) % state.objects.len();
+                    state.last_poll = now;
+
+                    Some((*device_id, object_type, instance))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Now execute the reads
+        for (device_id, object_type, instance) in devices_to_poll {
+            if let Err(e) = self.do_read_property(device_id, &object_type, instance, "present-value") {
+                tracing::trace!("Polling read failed for device {} {}.{}: {}", device_id, object_type, instance, e);
+            }
+        }
     }
 }

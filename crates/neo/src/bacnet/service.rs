@@ -133,6 +133,9 @@ impl Service for BacnetService {
             })
             .map_err(|e| ServiceError::InitializationFailed(format!("Failed to spawn worker: {}", e)))?;
 
+        // Clone the command sender for use in the response bridge (before moving to self)
+        let worker_tx = cmd_tx.clone();
+
         self.worker_cmd_tx = Some(cmd_tx);
         self.worker_handle = Some(handle);
 
@@ -151,6 +154,11 @@ impl Service for BacnetService {
                             device.address,
                             device.vendor_id
                         );
+
+                        // Automatically read object list to start polling
+                        let device_id = device.device_id;
+                        let _ = worker_tx.send(WorkerCommand::ReadObjectList { device_id });
+
                         // Store in AppState and broadcast to subscribers
                         let state = state.clone();
                         rt.spawn(async move {
@@ -166,6 +174,18 @@ impl Service for BacnetService {
                             result.property,
                             result.value
                         );
+                        // Store in AppState and broadcast to subscribers
+                        let state = state.clone();
+                        rt.spawn(async move {
+                            state.set_bacnet_object_value(
+                                result.device_id,
+                                &result.object_type,
+                                result.instance,
+                                &result.property,
+                                result.value,
+                                result.timestamp,
+                            ).await;
+                        });
                     }
                     WorkerResponse::ObjectListRead(result) => {
                         tracing::info!(
@@ -173,6 +193,38 @@ impl Service for BacnetService {
                             result.device_id,
                             result.objects.len()
                         );
+
+                        // Filter to readable object types for polling
+                        // Note: object types come as lowercase without hyphens (e.g., "analoginput")
+                        let readable_types = [
+                            "analoginput", "analogoutput", "analogvalue",
+                            "binaryinput", "binaryoutput", "binaryvalue",
+                            "multistateinput", "multistateoutput", "multistatevalue",
+                        ];
+                        let poll_objects: Vec<(String, u32)> = result.objects.iter()
+                            .filter(|obj| readable_types.contains(&obj.object_type.as_str()))
+                            .map(|obj| (obj.object_type.clone(), obj.instance))
+                            .collect();
+
+                        // Start polling if there are readable objects
+                        if !poll_objects.is_empty() {
+                            let device_id = result.device_id;
+                            let num_objects = poll_objects.len();
+                            // Poll interval: read one object per 200ms, so full cycle = num_objects * 200ms
+                            // This spreads the reads across time to avoid overwhelming the device
+                            let _ = worker_tx.send(WorkerCommand::StartPolling {
+                                device_id,
+                                objects: poll_objects,
+                                interval_ms: 200, // 200ms between individual reads
+                            });
+                            tracing::info!(
+                                "Started polling {} objects for device {} (full cycle: {}ms)",
+                                num_objects,
+                                device_id,
+                                num_objects * 200
+                            );
+                        }
+
                         // Store in AppState and broadcast to subscribers
                         let state = state.clone();
                         rt.spawn(async move {

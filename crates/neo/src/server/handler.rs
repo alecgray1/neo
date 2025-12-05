@@ -113,6 +113,9 @@ async fn handle_client_message(state: &AppState, session_id: Uuid, text: &str) {
         ClientMessage::BacnetReadObjects { id, device_id } => {
             handle_bacnet_read_objects(state, session_id, &id, device_id).await;
         }
+        ClientMessage::BacnetReadProperty { id, device_id, object_type, instance, property } => {
+            handle_bacnet_read_property(state, session_id, &id, device_id, &object_type, instance, &property).await;
+        }
     }
 }
 
@@ -515,6 +518,56 @@ async fn handle_bacnet_read_objects(state: &AppState, session_id: Uuid, id: &str
             "status": "pending",
             "device_id": device_id,
             "message": "Object list read in progress"
+        }))),
+    )
+    .await;
+}
+
+/// Handle BACnet read property request
+async fn handle_bacnet_read_property(
+    state: &AppState,
+    session_id: Uuid,
+    id: &str,
+    device_id: u32,
+    object_type: &str,
+    instance: u32,
+    property: &str,
+) {
+    use blueprint_runtime::service::Event;
+
+    tracing::info!(
+        device_id = device_id,
+        object_type = object_type,
+        instance = instance,
+        property = property,
+        "BACnet read property request"
+    );
+
+    // Publish event to the BACnet service
+    let event = Event::new(
+        "bacnet/read",
+        "websocket",
+        serde_json::json!({
+            "device_id": device_id,
+            "object_type": object_type,
+            "instance": instance,
+            "property": property,
+        }),
+    );
+
+    state.service_manager().publish_event(event);
+
+    // Send acknowledgment - actual data will come via subscription
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::success(id, Some(serde_json::json!({
+            "status": "pending",
+            "device_id": device_id,
+            "object_type": object_type,
+            "instance": instance,
+            "property": property,
+            "message": "Property read in progress"
         }))),
     )
     .await;

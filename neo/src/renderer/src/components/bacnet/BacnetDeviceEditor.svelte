@@ -1,8 +1,8 @@
 <script lang="ts">
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
-  import { Radio, RefreshCw, MapPin, Cpu, Hash, Settings2 } from '@lucide/svelte'
-  import { serverStore, type BacnetObject } from '$lib/stores/server.svelte'
+  import { Radio, RefreshCw, MapPin, Cpu, Hash, Settings2, Activity } from '@lucide/svelte'
+  import { serverStore, type BacnetObject, type BacnetObjectValue } from '$lib/stores/server.svelte'
 
   interface Props {
     content: string
@@ -27,6 +27,35 @@
     const id = deviceId()
     return id !== undefined ? serverStore.getBacnetDeviceObjects(id) : []
   })
+
+  // Get object value from store
+  function getObjectValue(obj: BacnetObject): BacnetObjectValue | undefined {
+    const id = deviceId()
+    if (id === undefined) return undefined
+    return serverStore.getBacnetObjectValue(id, obj.object_type, obj.instance)
+  }
+
+  // Format value for display
+  function formatValue(value: unknown): string {
+    if (value === null || value === undefined) return '—'
+    if (typeof value === 'number') {
+      // Format floats to 2 decimal places
+      return Number.isInteger(value) ? value.toString() : value.toFixed(2)
+    }
+    if (typeof value === 'boolean') return value ? 'ON' : 'OFF'
+    if (typeof value === 'object') return JSON.stringify(value)
+    return String(value)
+  }
+
+  // Check if object type is readable (has present-value)
+  function isReadableType(objectType: string): boolean {
+    const normalized = objectType.toLowerCase()
+    return [
+      'analoginput', 'analogoutput', 'analogvalue',
+      'binaryinput', 'binaryoutput', 'binaryvalue',
+      'multistateinput', 'multistateoutput', 'multistatevalue'
+    ].includes(normalized)
+  }
 
   let isLoadingObjects = $state(false)
 
@@ -159,15 +188,31 @@
               <thead>
                 <tr class="border-b" style="border-color: var(--neo-editorWidget-border);">
                   <th class="text-left py-2 px-2 opacity-60">Object Type</th>
-                  <th class="text-right py-2 px-2 opacity-60">Instance</th>
+                  <th class="text-center py-2 px-2 opacity-60">Instance</th>
+                  <th class="text-right py-2 px-2 opacity-60">Present Value</th>
                 </tr>
               </thead>
               <tbody>
                 {#each objects() as obj}
-                  <tr class="border-b" style="border-color: var(--neo-editorWidget-border);">
+                  {@const objValue = getObjectValue(obj)}
+                  <tr class="border-b hover:bg-[var(--neo-list-hoverBackground)]" style="border-color: var(--neo-editorWidget-border);">
                     <td class="py-2 px-2 font-mono">{obj.object_type}</td>
-                    <td class="py-2 px-2 text-right font-mono" style="color: var(--neo-textLink-foreground);">
+                    <td class="py-2 px-2 text-center font-mono" style="color: var(--neo-textLink-foreground);">
                       {obj.instance}
+                    </td>
+                    <td class="py-2 px-2 text-right font-mono">
+                      {#if isReadableType(obj.object_type)}
+                        {#if objValue}
+                          <span class="inline-flex items-center gap-1">
+                            <Activity class="w-3 h-3 text-green-500" />
+                            <span style="color: var(--neo-editor-foreground);">{formatValue(objValue.value)}</span>
+                          </span>
+                        {:else}
+                          <span class="opacity-40">polling...</span>
+                        {/if}
+                      {:else}
+                        <span class="opacity-30">—</span>
+                      {/if}
                     </td>
                   </tr>
                 {/each}

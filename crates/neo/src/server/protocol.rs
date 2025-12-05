@@ -78,6 +78,23 @@ pub enum ClientMessage {
         #[serde(rename = "deviceId")]
         device_id: u32,
     },
+
+    /// Request to read a BACnet object property value
+    #[serde(rename = "bacnet:readProperty")]
+    BacnetReadProperty {
+        id: String,
+        #[serde(rename = "deviceId")]
+        device_id: u32,
+        #[serde(rename = "objectType")]
+        object_type: String,
+        instance: u32,
+        #[serde(default = "default_property")]
+        property: String,
+    },
+}
+
+fn default_property() -> String {
+    "present-value".to_string()
 }
 
 /// Plugin registration data from Vite plugin

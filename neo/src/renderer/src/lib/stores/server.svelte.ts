@@ -1,4 +1,5 @@
 import type { ConnectionState, ServerConfig, ChangeEvent } from '../../../../preload/index.d'
+import { SvelteMap } from 'svelte/reactivity'
 import { documentStore } from './documents.svelte'
 
 export interface ServerState {
@@ -46,6 +47,15 @@ export interface BacnetObject {
   instance: number
 }
 
+export interface BacnetObjectValue {
+  device_id: number
+  object_type: string
+  instance: number
+  property: string
+  value: unknown
+  timestamp: number
+}
+
 export interface Blueprint {
   id: string
   name: string
@@ -72,7 +82,9 @@ function createServerStore() {
   let blueprints = $state<Blueprint[]>([])
   let schedules = $state<Schedule[]>([])
   let bacnetDevices = $state<BacnetDevice[]>([])
-  let bacnetDeviceObjects = $state<Map<number, BacnetObject[]>>(new Map())
+  const bacnetDeviceObjects = new SvelteMap<number, BacnetObject[]>()
+  // Key is "deviceId:objectType:instance" e.g., "201:analog-input:1"
+  const bacnetObjectValues = new SvelteMap<string, BacnetObjectValue>()
   let error = $state<string | null>(null)
   let initialized = $state(false)
 
@@ -109,6 +121,13 @@ function createServerStore() {
     getBacnetDeviceObjects(deviceId: number): BacnetObject[] {
       return bacnetDeviceObjects.get(deviceId) ?? []
     },
+    get bacnetObjectValues() {
+      return bacnetObjectValues
+    },
+    getBacnetObjectValue(deviceId: number, objectType: string, instance: number): BacnetObjectValue | undefined {
+      const key = `${deviceId}:${objectType}:${instance}`
+      return bacnetObjectValues.get(key)
+    },
     get error() {
       return error
     },
@@ -138,7 +157,8 @@ function createServerStore() {
           blueprints = []
           schedules = []
           bacnetDevices = []
-          bacnetDeviceObjects = new Map()
+          bacnetDeviceObjects.clear()
+          bacnetObjectValues.clear()
         }
       })
 
@@ -184,7 +204,8 @@ function createServerStore() {
       blueprints = []
       schedules = []
       bacnetDevices = []
-      bacnetDeviceObjects = new Map()
+      bacnetDeviceObjects.clear()
+      bacnetObjectValues.clear()
     },
 
     async setConfig(newConfig: Partial<ServerConfig>) {
@@ -293,13 +314,19 @@ function createServerStore() {
         const parts = path.split('/')
         const deviceId = parseInt(parts[3], 10)
 
-        // Check if this is an object list update
-        if (parts[4] === 'objects') {
+        // Check if this is an object list update: /bacnet/devices/{id}/objects
+        if (parts[4] === 'objects' && parts.length === 5) {
           if (changeType === 'updated' && data) {
             const objectData = data as { device_id: number; objects: BacnetObject[] }
-            const newMap = new Map(bacnetDeviceObjects)
-            newMap.set(objectData.device_id, objectData.objects)
-            bacnetDeviceObjects = newMap
+            bacnetDeviceObjects.set(objectData.device_id, objectData.objects)
+          }
+        }
+        // Check if this is an object value update: /bacnet/devices/{id}/objects/{type}/{instance}/{property}
+        else if (parts[4] === 'objects' && parts.length >= 8) {
+          if (changeType === 'updated' && data) {
+            const valueData = data as BacnetObjectValue
+            const key = `${valueData.device_id}:${valueData.object_type}:${valueData.instance}`
+            bacnetObjectValues.set(key, valueData)
           }
         } else {
           // This is a device update
@@ -343,6 +370,28 @@ function createServerStore() {
         })
       } catch (e) {
         console.error('Failed to request BACnet object list:', e)
+        throw e
+      }
+    },
+
+    // Request a single property read (for manual refresh)
+    async readBacnetProperty(
+      deviceId: number,
+      objectType: string,
+      instance: number,
+      property: string = 'present-value'
+    ): Promise<void> {
+      try {
+        await window.serverAPI.send({
+          type: 'bacnet:readProperty',
+          id: `bacnet-read-${deviceId}-${objectType}-${instance}-${Date.now()}`,
+          deviceId,
+          objectType,
+          instance,
+          property
+        })
+      } catch (e) {
+        console.error('Failed to request BACnet property read:', e)
         throw e
       }
     }

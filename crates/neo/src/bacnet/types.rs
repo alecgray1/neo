@@ -65,6 +65,18 @@ pub enum WorkerCommand {
     ReadObjectList {
         device_id: u32,
     },
+    /// Start polling values for a device
+    StartPolling {
+        device_id: u32,
+        /// Objects to poll (object_type, instance)
+        objects: Vec<(String, u32)>,
+        /// Poll interval in milliseconds
+        interval_ms: u64,
+    },
+    /// Stop polling for a device
+    StopPolling {
+        device_id: u32,
+    },
     /// Shutdown the worker thread
     Shutdown,
 }
