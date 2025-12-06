@@ -51,7 +51,7 @@ pub use mode::{BlueprintMode, RuntimeMode, ServiceMode};
 pub use spawn::{spawn_blueprint_runtime, spawn_service_runtime};
 
 // Services
-pub use services::{Event, EventPublisher, PointStore, RuntimeServices};
+pub use services::{EcsError, EcsStore, Event, EventPublisher, PointStore, RuntimeServices};
 
 // Types for JS communication
 pub use types::{BlueprintJs, BlueprintNodeJs, ConnectionJs, ExecutionResultJs, ExecutionTrigger};

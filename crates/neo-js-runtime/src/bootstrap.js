@@ -170,6 +170,144 @@ globalThis.Neo = {
   utils: {
     now: () => core.ops.op_now(),
   },
+
+  /**
+   * ECS operations - entity-component system for data modeling.
+   *
+   * Provides a Flecs-based ECS for managing entities with components
+   * representing BACnet devices, points, and their relationships.
+   */
+  ecs: {
+    /**
+     * Create a new entity.
+     * @param {Object} options - Entity creation options
+     * @param {string} [options.name] - Optional entity name
+     * @param {bigint|number} [options.parent] - Optional parent entity ID
+     * @param {Object} [options.components] - Component data keyed by component name
+     * @param {string[]} [options.tags] - Tags to add to the entity
+     * @returns {Promise<bigint>} The created entity ID
+     *
+     * @example
+     * const vav = await Neo.ecs.createEntity({
+     *   name: "VAV-3-01",
+     *   parent: floor3Id,
+     *   components: {
+     *     BacnetDevice: { device_id: 101, address: "10.0.1.50:47808" },
+     *     Temperature: { value: 72.4, unit: "F" },
+     *   },
+     *   tags: ["VavBox", "Device"],
+     * });
+     */
+    createEntity: async (options = {}) => {
+      const { name, parent, components = {}, tags = [] } = options;
+      const componentList = Object.entries(components);
+      return await core.ops.op_ecs_create_entity(
+        name ?? null,
+        parent != null ? BigInt(parent) : null,
+        componentList,
+        tags
+      );
+    },
+
+    /**
+     * Delete an entity.
+     * @param {bigint|number} entityId - Entity ID to delete
+     */
+    deleteEntity: async (entityId) => {
+      await core.ops.op_ecs_delete_entity(BigInt(entityId));
+    },
+
+    /**
+     * Get a component from an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @param {string} component - Component name
+     * @returns {Promise<Object|null>} The component data or null
+     */
+    getComponent: async (entityId, component) => {
+      return await core.ops.op_ecs_get_component(BigInt(entityId), component);
+    },
+
+    /**
+     * Set a component on an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @param {string} component - Component name
+     * @param {Object} data - Component data
+     */
+    setComponent: async (entityId, component, data) => {
+      await core.ops.op_ecs_set_component(BigInt(entityId), component, data);
+    },
+
+    /**
+     * Add a tag to an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @param {string} tag - Tag name
+     */
+    addTag: async (entityId, tag) => {
+      await core.ops.op_ecs_add_tag(BigInt(entityId), tag);
+    },
+
+    /**
+     * Remove a tag from an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @param {string} tag - Tag name
+     */
+    removeTag: async (entityId, tag) => {
+      await core.ops.op_ecs_remove_tag(BigInt(entityId), tag);
+    },
+
+    /**
+     * Check if an entity has a tag.
+     * @param {bigint|number} entityId - Entity ID
+     * @param {string} tag - Tag name
+     * @returns {Promise<boolean>}
+     */
+    hasTag: async (entityId, tag) => {
+      return await core.ops.op_ecs_has_tag(BigInt(entityId), tag);
+    },
+
+    /**
+     * Look up an entity by name.
+     * @param {string} name - Entity name
+     * @returns {Promise<bigint|null>} Entity ID or null if not found
+     */
+    lookup: async (name) => {
+      return await core.ops.op_ecs_lookup(name);
+    },
+
+    /**
+     * Get children of an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @returns {Promise<bigint[]>} Array of child entity IDs
+     */
+    getChildren: async (entityId) => {
+      return await core.ops.op_ecs_get_children(BigInt(entityId));
+    },
+
+    /**
+     * Get parent of an entity.
+     * @param {bigint|number} entityId - Entity ID
+     * @returns {Promise<bigint|null>} Parent entity ID or null
+     */
+    getParent: async (entityId) => {
+      return await core.ops.op_ecs_get_parent(BigInt(entityId));
+    },
+
+    /**
+     * Query entities with specific components.
+     * @param {Object} options - Query options
+     * @param {string[]} options.with - Components entities must have
+     * @returns {Promise<Object[]>} Query results
+     *
+     * @example
+     * const vavsOnFloor3 = await Neo.ecs.query({
+     *   with: ["Temperature", "VavBox"],
+     * });
+     */
+    query: async (options = {}) => {
+      const { with: components = [] } = options;
+      return await core.ops.op_ecs_query(components);
+    },
+  },
 };
 
 /**

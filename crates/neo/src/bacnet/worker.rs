@@ -3,10 +3,11 @@
 //! Handles BACnet/IP communication in a dedicated thread since the bacnet crate
 //! uses synchronous I/O.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::mpsc::{Receiver, Sender, TryRecvError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use uuid::Uuid;
 
 /// Polling state for a device
 struct DevicePollingState {
@@ -18,6 +19,20 @@ struct DevicePollingState {
     last_poll: Instant,
     /// Current index in objects list (for round-robin polling)
     current_index: usize,
+}
+
+/// Active discovery session
+struct ActiveDiscovery {
+    /// Session ID
+    session_id: Uuid,
+    /// WebSocket client ID to send results to
+    client_id: Uuid,
+    /// Request ID for response correlation
+    request_id: String,
+    /// When this session expires
+    expires_at: Instant,
+    /// Device IDs already found in this session (for dedup)
+    devices_found: HashSet<u32>,
 }
 
 use bacnet::apdu::{pdu_type, unconfirmed_service, service_choice};
@@ -60,6 +75,8 @@ pub struct BacnetWorker {
     pending_requests: HashMap<u8, PendingRequest>,
     /// Devices being polled
     polling_devices: HashMap<u32, DevicePollingState>,
+    /// Active discovery sessions
+    active_discoveries: HashMap<Uuid, ActiveDiscovery>,
 }
 
 impl BacnetWorker {
@@ -91,6 +108,7 @@ impl BacnetWorker {
             invoke_id: 0,
             pending_requests: HashMap::new(),
             polling_devices: HashMap::new(),
+            active_discoveries: HashMap::new(),
         })
     }
 
@@ -137,6 +155,12 @@ impl BacnetWorker {
                 Ok(WorkerCommand::StopPolling { device_id }) => {
                     self.stop_polling(device_id);
                 }
+                Ok(WorkerCommand::DiscoverSession { session_id, client_id, request_id, low_limit, high_limit, duration_secs }) => {
+                    self.start_discovery_session(session_id, client_id, request_id, low_limit, high_limit, duration_secs);
+                }
+                Ok(WorkerCommand::StopDiscoverySession { session_id }) => {
+                    self.stop_discovery_session(session_id);
+                }
                 Err(TryRecvError::Empty) => {}
                 Err(TryRecvError::Disconnected) => {
                     tracing::info!("Command channel disconnected, shutting down");
@@ -149,6 +173,9 @@ impl BacnetWorker {
 
             // Check for request timeouts (10 second timeout)
             self.check_timeouts(Duration::from_secs(10));
+
+            // Check for discovery session timeouts
+            self.check_discovery_timeouts();
 
             // Execute polling for devices
             self.do_polling();
@@ -336,6 +363,22 @@ impl BacnetWorker {
             vendor_id
         );
 
+        // Send to all active discovery sessions (streaming mode)
+        for discovery in self.active_discoveries.values_mut() {
+            // Skip if already reported this device in this session
+            if discovery.devices_found.contains(&device_id) {
+                continue;
+            }
+            discovery.devices_found.insert(device_id);
+
+            let _ = self.resp_tx.send(WorkerResponse::SessionDeviceDiscovered {
+                client_id: discovery.client_id,
+                request_id: discovery.request_id.clone(),
+                device: device.clone(),
+            });
+        }
+
+        // Also send legacy DeviceDiscovered for backwards compatibility
         let _ = self.resp_tx.send(WorkerResponse::DeviceDiscovered(device));
 
         Ok(())
@@ -768,6 +811,85 @@ impl BacnetWorker {
         for (device_id, object_type, instance) in devices_to_poll {
             if let Err(e) = self.do_read_property(device_id, &object_type, instance, "present-value") {
                 tracing::trace!("Polling read failed for device {} {}.{}: {}", device_id, object_type, instance, e);
+            }
+        }
+    }
+
+    /// Start a new discovery session
+    fn start_discovery_session(
+        &mut self,
+        session_id: Uuid,
+        client_id: Uuid,
+        request_id: String,
+        low_limit: Option<u32>,
+        high_limit: Option<u32>,
+        duration_secs: u64,
+    ) {
+        tracing::info!(
+            "Starting discovery session {} for client {} (duration: {}s)",
+            session_id,
+            client_id,
+            duration_secs
+        );
+
+        // Store the active discovery session
+        self.active_discoveries.insert(session_id, ActiveDiscovery {
+            session_id,
+            client_id,
+            request_id: request_id.clone(),
+            expires_at: Instant::now() + Duration::from_secs(duration_secs),
+            devices_found: HashSet::new(),
+        });
+
+        // Send the Who-Is broadcast
+        if let Err(e) = self.do_discovery(low_limit, high_limit) {
+            tracing::warn!("Discovery broadcast failed: {}", e);
+            let _ = self.resp_tx.send(WorkerResponse::Error(e.to_string()));
+        }
+    }
+
+    /// Stop a discovery session early
+    fn stop_discovery_session(&mut self, session_id: Uuid) {
+        if let Some(discovery) = self.active_discoveries.remove(&session_id) {
+            tracing::info!(
+                "Stopped discovery session {} ({} devices found)",
+                session_id,
+                discovery.devices_found.len()
+            );
+
+            let _ = self.resp_tx.send(WorkerResponse::SessionComplete {
+                client_id: discovery.client_id,
+                request_id: discovery.request_id,
+                devices_found: discovery.devices_found.len() as u32,
+            });
+        }
+    }
+
+    /// Check for expired discovery sessions
+    fn check_discovery_timeouts(&mut self) {
+        let now = Instant::now();
+
+        // Find expired sessions
+        let expired: Vec<Uuid> = self.active_discoveries
+            .iter()
+            .filter(|(_, d)| now >= d.expires_at)
+            .map(|(id, _)| *id)
+            .collect();
+
+        // Complete each expired session
+        for session_id in expired {
+            if let Some(discovery) = self.active_discoveries.remove(&session_id) {
+                tracing::info!(
+                    "Discovery session {} completed (timeout, {} devices found)",
+                    session_id,
+                    discovery.devices_found.len()
+                );
+
+                let _ = self.resp_tx.send(WorkerResponse::SessionComplete {
+                    client_id: discovery.client_id,
+                    request_id: discovery.request_id,
+                    devices_found: discovery.devices_found.len() as u32,
+                });
             }
         }
     }

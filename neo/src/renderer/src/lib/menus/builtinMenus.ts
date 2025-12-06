@@ -141,6 +141,14 @@ export function registerBuiltinMenus(): void {
     order: 2
   })
 
+  // BACnet device management
+  menuRegistry.appendMenuItem(MenuId.ExplorerContext, {
+    command: { id: 'neo.bacnet.removeDevice', title: 'Remove Device' },
+    when: 'explorerResourceIsBacnetDevice',
+    group: '7_modification',
+    order: 3
+  })
+
   // ========================================
   // Editor Context Menu
   // ========================================

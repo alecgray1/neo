@@ -97,7 +97,7 @@
     {:else if document.language === 'bacnet-device'}
       <!-- BACnet device viewer -->
       <div class="flex-1 overflow-hidden">
-        <BacnetDeviceEditor content={document.content} />
+        <BacnetDeviceEditor content={document.content} uri={document.uri} />
       </div>
     {:else}
       <ScrollArea class="flex-1">

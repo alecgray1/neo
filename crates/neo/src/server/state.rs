@@ -11,9 +11,9 @@ use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 use wildmatch::WildMatch;
 
-use blueprint_runtime::service::ServiceManager;
+use blueprint_runtime::service::{Event, EventPublisher, ServiceManager};
+use neo_ecs::EcsHandle;
 
-use crate::bacnet::{BacnetObject, DiscoveredDevice};
 use crate::project::{BlueprintConfig, Project};
 use crate::plugin::{JsService, JsServiceConfig};
 
@@ -35,21 +35,17 @@ struct AppStateInner {
     /// Service manager
     service_manager: Arc<ServiceManager>,
 
+    /// Event publisher for service events
+    event_publisher: EventPublisher,
+
     /// Connected clients
     clients: DashMap<Uuid, ClientState>,
 
     /// Dev plugins registered via WebSocket (plugin_id -> registration)
     dev_plugins: DashMap<String, PluginRegistration>,
 
-    /// Discovered BACnet devices (device_id -> device info)
-    bacnet_devices: DashMap<u32, DiscoveredDevice>,
-
-    /// BACnet device object lists (device_id -> objects)
-    bacnet_device_objects: DashMap<u32, Vec<BacnetObject>>,
-
-    /// BACnet object values (device_id -> (object_key -> value))
-    /// object_key is "object_type:instance" e.g., "analog-input:1"
-    bacnet_object_values: DashMap<u32, DashMap<String, serde_json::Value>>,
+    /// ECS handle for entity queries (set after ECS service starts)
+    ecs_handle: RwLock<Option<EcsHandle>>,
 
     /// Broadcast channel for server-wide notifications
     broadcast_tx: broadcast::Sender<ServerMessage>,
@@ -72,17 +68,17 @@ impl AppState {
     /// Create new application state
     pub fn new(service_manager: Arc<ServiceManager>) -> Self {
         let (broadcast_tx, _) = broadcast::channel(256);
+        let event_publisher = service_manager.event_publisher();
 
         Self {
             inner: Arc::new(AppStateInner {
                 project: RwLock::new(None),
                 project_path: RwLock::new(None),
                 service_manager,
+                event_publisher,
                 clients: DashMap::new(),
                 dev_plugins: DashMap::new(),
-                bacnet_devices: DashMap::new(),
-                bacnet_device_objects: DashMap::new(),
-                bacnet_object_values: DashMap::new(),
+                ecs_handle: RwLock::new(None),
                 broadcast_tx,
             }),
         }
@@ -283,127 +279,31 @@ impl AppState {
         self.inner.clients.len()
     }
 
-    // ========== BACnet Device Methods ==========
+    // ========== ECS Methods ==========
 
-    /// Add or update a discovered BACnet device
-    pub async fn add_bacnet_device(&self, device: DiscoveredDevice) {
-        let device_id = device.device_id;
-        let is_new = !self.inner.bacnet_devices.contains_key(&device_id);
+    /// Set the ECS handle (called after ECS service starts)
+    pub async fn set_ecs_handle(&self, handle: EcsHandle) {
+        *self.inner.ecs_handle.write().await = Some(handle);
+        tracing::info!("ECS handle set in AppState");
+    }
 
-        self.inner.bacnet_devices.insert(device_id, device.clone());
+    /// Get the ECS handle
+    pub async fn ecs_handle(&self) -> Option<EcsHandle> {
+        self.inner.ecs_handle.read().await.clone()
+    }
 
-        let change_type = if is_new {
-            ChangeType::Created
-        } else {
-            ChangeType::Updated
+    /// Check if a BACnet device exists in ECS by device_id
+    pub async fn device_exists_in_ecs(&self, device_id: u32) -> bool {
+        let Some(handle) = self.ecs_handle().await else {
+            return false;
         };
 
-        // Broadcast to subscribers
-        self.broadcast(
-            &format!("/bacnet/devices/{}", device_id),
-            ServerMessage::change(
-                format!("/bacnet/devices/{}", device_id),
-                change_type,
-                Some(serde_json::to_value(&device).unwrap()),
-            ),
-        ).await;
-    }
-
-    /// Get all discovered BACnet devices
-    pub fn get_bacnet_devices(&self) -> Vec<DiscoveredDevice> {
-        self.inner.bacnet_devices
-            .iter()
-            .map(|entry| entry.value().clone())
-            .collect()
-    }
-
-    /// Get a specific BACnet device by ID
-    pub fn get_bacnet_device(&self, device_id: u32) -> Option<DiscoveredDevice> {
-        self.inner.bacnet_devices.get(&device_id).map(|d| d.clone())
-    }
-
-    /// Set the object list for a BACnet device
-    pub async fn set_bacnet_device_objects(&self, device_id: u32, objects: Vec<BacnetObject>) {
-        let object_count = objects.len();
-        self.inner.bacnet_device_objects.insert(device_id, objects.clone());
-
-        // Broadcast to subscribers
-        self.broadcast(
-            &format!("/bacnet/devices/{}/objects", device_id),
-            ServerMessage::change(
-                format!("/bacnet/devices/{}/objects", device_id),
-                ChangeType::Updated,
-                Some(serde_json::json!({
-                    "device_id": device_id,
-                    "objects": objects,
-                })),
-            ),
-        ).await;
-
-        tracing::info!("Stored {} objects for BACnet device {}", object_count, device_id);
-    }
-
-    /// Get the object list for a BACnet device
-    pub fn get_bacnet_device_objects(&self, device_id: u32) -> Option<Vec<BacnetObject>> {
-        self.inner.bacnet_device_objects.get(&device_id).map(|o| o.clone())
-    }
-
-    /// Set a BACnet object property value
-    pub async fn set_bacnet_object_value(
-        &self,
-        device_id: u32,
-        object_type: &str,
-        instance: u32,
-        property: &str,
-        value: serde_json::Value,
-        timestamp: u64,
-    ) {
-        let object_key = format!("{}:{}", object_type, instance);
-
-        // Get or create the device's value map
-        let device_values = self.inner.bacnet_object_values
-            .entry(device_id)
-            .or_insert_with(DashMap::new);
-
-        // Check if value has changed
-        let value_changed = match device_values.get(&object_key) {
-            Some(existing) => *existing != value,
-            None => true, // New value, always broadcast
-        };
-
-        device_values.insert(object_key.clone(), value.clone());
-
-        // Only broadcast if value changed
-        if value_changed {
-            let path = format!("/bacnet/devices/{}/objects/{}/{}/{}", device_id, object_type, instance, property);
-            self.broadcast(
-                &path,
-                ServerMessage::change(
-                    path.clone(),
-                    ChangeType::Updated,
-                    Some(serde_json::json!({
-                        "device_id": device_id,
-                        "object_type": object_type,
-                        "instance": instance,
-                        "property": property,
-                        "value": value,
-                        "timestamp": timestamp,
-                    })),
-                ),
-            ).await;
-
-            tracing::debug!(
-                "BACnet value changed: device={} {}:{}.{} = {:?}",
-                device_id, object_type, instance, property, value
-            );
+        // Look up entity by name (bacnet-device-{id})
+        let name = format!("bacnet-device-{}", device_id);
+        match handle.lookup(&name).await {
+            Ok(Some(_)) => true,
+            _ => false,
         }
-    }
-
-    /// Get all object values for a device
-    pub fn get_bacnet_device_values(&self, device_id: u32) -> Option<std::collections::HashMap<String, serde_json::Value>> {
-        self.inner.bacnet_object_values.get(&device_id).map(|values| {
-            values.iter().map(|e| (e.key().clone(), e.value().clone())).collect()
-        })
     }
 
     /// Send a message to a specific client

@@ -19,6 +19,7 @@
   } from '@lucide/svelte'
   import NeoContextMenu from '../contextmenu/NeoContextMenu.svelte'
   import ConnectionDialog from './ConnectionDialog.svelte'
+  import BacnetDiscoveryView from '../bacnet/BacnetDiscoveryView.svelte'
   import { MenuId } from '$lib/menus/menuId'
   import { getContextKeyService } from '$lib/services/context'
 
@@ -196,16 +197,29 @@
     ctx.set('explorerResourcePath', node.uri ?? node.name)
     ctx.set('explorerResourceName', node.name)
     ctx.set('explorerFocus', true)
+    // BACnet device detection
+    const isBacnetDevice = node.icon === 'bacnet' && node.uri?.startsWith('neo://bacnet/devices/')
+    ctx.set('explorerResourceIsBacnetDevice', isBacnetDevice)
     return ctx
   }
 
   // Create arg for explorer commands (VS Code pattern)
   function createNodeArg(node: TreeNode) {
+    // Extract device ID from BACnet device URI (neo://bacnet/devices/{id})
+    let bacnetDeviceId: number | undefined
+    if (node.icon === 'bacnet' && node.uri?.startsWith('neo://bacnet/devices/')) {
+      const match = node.uri.match(/\/bacnet\/devices\/(\d+)/)
+      if (match) {
+        bacnetDeviceId = parseInt(match[1], 10)
+      }
+    }
+
     return {
       resourcePath: node.uri ?? node.name,
       resourceName: node.name,
       isFile: node.type === 'file',
-      isFolder: node.type === 'folder'
+      isFolder: node.type === 'folder',
+      bacnetDeviceId
     }
   }
 
@@ -215,6 +229,8 @@
         return 'EXPLORER'
       case 'search':
         return 'SEARCH'
+      case 'bacnet-discovery':
+        return 'BACNET DISCOVERY'
       case 'git':
         return 'SOURCE CONTROL'
       case 'debug':
@@ -279,6 +295,8 @@
       {/if}
     {:else if layoutStore.state.activeActivityItem === 'search'}
       <div class="p-4 text-sm opacity-60">Search functionality coming soon...</div>
+    {:else if layoutStore.state.activeActivityItem === 'bacnet-discovery'}
+      <BacnetDiscoveryView />
     {:else if layoutStore.state.activeActivityItem === 'git'}
       <div class="p-4 text-sm opacity-60">Source control coming soon...</div>
     {:else if layoutStore.state.activeActivityItem === 'debug'}

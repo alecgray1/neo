@@ -1,14 +1,20 @@
 <script lang="ts">
   import { ScrollArea } from '$lib/components/ui/scroll-area/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
-  import { Radio, RefreshCw, MapPin, Cpu, Hash, Settings2, Activity } from '@lucide/svelte'
+  import * as Dialog from '$lib/components/ui/dialog/index.js'
+  import { Radio, RefreshCw, MapPin, Cpu, Hash, Settings2, Activity, Trash2 } from '@lucide/svelte'
   import { serverStore, type BacnetObject, type BacnetObjectValue } from '$lib/stores/server.svelte'
+  import { editorStore } from '$lib/stores/editor.svelte'
 
   interface Props {
     content: string
+    uri: string
   }
 
-  let { content }: Props = $props()
+  let { content, uri }: Props = $props()
+
+  let showRemoveDialog = $state(false)
+  let isRemoving = $state(false)
 
   // Parse device data from JSON content
   let device = $derived(() => {
@@ -82,6 +88,23 @@
       isLoadingObjects = false
     }
   })
+
+  async function handleRemoveDevice() {
+    const id = deviceId()
+    if (id === undefined) return
+
+    isRemoving = true
+    try {
+      // Close this editor tab
+      editorStore.closeTabByUri(uri)
+      // Remove the device
+      await serverStore.removeBacnetDevice(id)
+    } catch (e) {
+      console.error('Failed to remove device:', e)
+      isRemoving = false
+    }
+    showRemoveDialog = false
+  }
 </script>
 
 <ScrollArea class="h-full">
@@ -95,12 +118,37 @@
         >
           <Radio class="w-8 h-8" style="color: var(--neo-textLink-foreground);" />
         </div>
-        <div>
+        <div class="flex-1">
           <h1 class="text-2xl font-semibold" style="color: var(--neo-editor-foreground);">
             Device {device().device_id}
           </h1>
           <p class="text-sm opacity-60">BACnet/IP Device</p>
         </div>
+        <Dialog.Root bind:open={showRemoveDialog}>
+          <Dialog.Trigger>
+            <Button variant="destructive" size="sm">
+              <Trash2 class="w-4 h-4 mr-2" />
+              Remove Device
+            </Button>
+          </Dialog.Trigger>
+          <Dialog.Content>
+            <Dialog.Header>
+              <Dialog.Title>Remove Device</Dialog.Title>
+              <Dialog.Description>
+                Are you sure you want to remove Device {device().device_id} from the system?
+                This will stop polling and remove all associated data.
+              </Dialog.Description>
+            </Dialog.Header>
+            <Dialog.Footer>
+              <Button variant="outline" onclick={() => showRemoveDialog = false}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onclick={handleRemoveDevice} disabled={isRemoving}>
+                {isRemoving ? 'Removing...' : 'Remove'}
+              </Button>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Root>
       </div>
 
       <!-- Device Info Cards -->

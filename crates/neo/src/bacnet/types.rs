@@ -2,9 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
+use ts_rs::TS;
+use uuid::Uuid;
 
 /// Discovered BACnet device from I-Am response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct DiscoveredDevice {
     /// BACnet device instance number
     pub device_id: u32,
@@ -49,10 +52,29 @@ pub struct DeviceAddress {
 /// Commands sent from async service to blocking worker
 #[derive(Debug)]
 pub enum WorkerCommand {
-    /// Send Who-Is broadcast to discover devices
+    /// Send Who-Is broadcast to discover devices (legacy, auto-stores results)
     Discover {
         low_limit: Option<u32>,
         high_limit: Option<u32>,
+    },
+    /// Start a discovery session that streams results back to a specific client
+    DiscoverSession {
+        /// Unique ID for this discovery session
+        session_id: Uuid,
+        /// WebSocket client ID to send results to
+        client_id: Uuid,
+        /// Request ID from the client (for response correlation)
+        request_id: String,
+        /// Optional lower bound for device instance range
+        low_limit: Option<u32>,
+        /// Optional upper bound for device instance range
+        high_limit: Option<u32>,
+        /// How long to run discovery (seconds)
+        duration_secs: u64,
+    },
+    /// Stop an active discovery session
+    StopDiscoverySession {
+        session_id: Uuid,
     },
     /// Read a property from a device
     ReadProperty {
@@ -102,8 +124,26 @@ pub struct ObjectListResult {
 /// Responses sent from blocking worker to async service
 #[derive(Debug)]
 pub enum WorkerResponse {
-    /// A device was discovered via I-Am
+    /// A device was discovered via I-Am (legacy, for auto-store flow)
     DeviceDiscovered(DiscoveredDevice),
+    /// A device was discovered during a specific discovery session
+    SessionDeviceDiscovered {
+        /// WebSocket client ID to send results to
+        client_id: Uuid,
+        /// Request ID from the client
+        request_id: String,
+        /// The discovered device
+        device: DiscoveredDevice,
+    },
+    /// A discovery session has completed (timeout reached or stopped)
+    SessionComplete {
+        /// WebSocket client ID to notify
+        client_id: Uuid,
+        /// Request ID from the client
+        request_id: String,
+        /// Number of devices found during this session
+        devices_found: u32,
+    },
     /// A property was successfully read
     PropertyRead(PointReadResult),
     /// Object list was successfully read

@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/neo",
   "crates/neo-js-runtime",
+  "crates/neo-ecs",
   "crates/blueprint_runtime",
 ]
 default-members = ["crates/neo"]
@@ -15,6 +16,7 @@ publish = false
 # Internal crates
 blueprint_runtime = { path = "crates/blueprint_runtime" }
 neo-js-runtime = { path = "crates/neo-js-runtime" }
+neo-ecs = { path = "crates/neo-ecs" }
 
 tokio = { version = "1.40", features = ["full"] }
 

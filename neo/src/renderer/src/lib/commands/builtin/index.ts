@@ -11,11 +11,12 @@ import { editCommands } from './edit'
 import { tabCommands } from './tab'
 import { explorerCommands } from './explorer'
 import { developerCommands } from './developer'
+import { bacnetCommands } from './bacnet'
 
 /**
  * All built-in commands
  */
-export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands, ...tabCommands, ...explorerCommands, ...developerCommands]
+export const builtinCommands = [...viewCommands, ...fileCommands, ...editCommands, ...tabCommands, ...explorerCommands, ...developerCommands, ...bacnetCommands]
 
 /**
  * Register all built-in commands

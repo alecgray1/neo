@@ -296,6 +296,129 @@ const developerAPI = {
     ipcRenderer.invoke('developer:reloadExtension', extensionId)
 }
 
+// BACnet API for device discovery and management
+export interface DiscoveredDevice {
+  device_id: number
+  address: string
+  max_apdu: number
+  vendor_id: number
+  segmentation: string
+  vendor_name?: string
+  model_name?: string
+  object_name?: string
+}
+
+export interface DiscoveryOptions {
+  lowLimit?: number
+  highLimit?: number
+  duration?: number
+}
+
+export interface DeviceAddedResult {
+  deviceId: number
+  entityId: number
+}
+
+const bacnetAPI = {
+  // Discovery
+  startDiscovery: (options?: DiscoveryOptions): Promise<void> => {
+    const id = `bacnet-discover-${Date.now()}`
+    // Build message, only including defined values to avoid sending null
+    const message: Record<string, unknown> = {
+      type: 'bacnet:discover',
+      id
+    }
+    if (options?.lowLimit !== undefined && options.lowLimit !== null) {
+      message.lowLimit = options.lowLimit
+    }
+    if (options?.highLimit !== undefined && options.highLimit !== null) {
+      message.highLimit = options.highLimit
+    }
+    if (options?.duration !== undefined && options.duration !== null) {
+      message.duration = options.duration
+    }
+    return ipcRenderer.invoke('server:send', message)
+  },
+
+  stopDiscovery: (): Promise<void> => {
+    const id = `bacnet-stop-${Date.now()}`
+    return ipcRenderer.invoke('server:send', {
+      type: 'bacnet:stopDiscovery',
+      id
+    })
+  },
+
+  onDiscoveryStarted: (callback: (id: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { id: string }): void =>
+      callback(data.id)
+    ipcRenderer.on('bacnet:discovery-started', handler)
+    return (): void => {
+      ipcRenderer.removeListener('bacnet:discovery-started', handler)
+    }
+  },
+
+  onDeviceFound: (
+    callback: (device: DiscoveredDevice, alreadyExists: boolean) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { device: DiscoveredDevice; alreadyExists: boolean }
+    ): void => callback(data.device, data.alreadyExists)
+    ipcRenderer.on('bacnet:device-found', handler)
+    return (): void => {
+      ipcRenderer.removeListener('bacnet:device-found', handler)
+    }
+  },
+
+  onDiscoveryComplete: (callback: (devicesFound: number) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { devicesFound: number }): void =>
+      callback(data.devicesFound)
+    ipcRenderer.on('bacnet:discovery-complete', handler)
+    return (): void => {
+      ipcRenderer.removeListener('bacnet:discovery-complete', handler)
+    }
+  },
+
+  // Device management
+  addDevice: (device: DiscoveredDevice): Promise<DeviceAddedResult> => {
+    const id = `bacnet-add-${Date.now()}`
+    return ipcRenderer.invoke('server:send', {
+      type: 'bacnet:addDevice',
+      id,
+      device
+    })
+  },
+
+  removeDevice: (deviceId: number): Promise<void> => {
+    const id = `bacnet-remove-${Date.now()}`
+    return ipcRenderer.invoke('server:send', {
+      type: 'bacnet:removeDevice',
+      id,
+      deviceId
+    })
+  },
+
+  onDeviceAdded: (callback: (deviceId: number, entityId: number) => void): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { deviceId: number; entityId: number }
+    ): void => callback(data.deviceId, data.entityId)
+    ipcRenderer.on('bacnet:device-added', handler)
+    return (): void => {
+      ipcRenderer.removeListener('bacnet:device-added', handler)
+    }
+  },
+
+  onDeviceRemoved: (callback: (deviceId: number) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { deviceId: number }): void =>
+      callback(data.deviceId)
+    ipcRenderer.on('bacnet:device-removed', handler)
+    return (): void => {
+      ipcRenderer.removeListener('bacnet:device-removed', handler)
+    }
+  }
+}
+
 // Project API - high-level data operations
 const projectAPI = {
   // Project info
@@ -330,6 +453,7 @@ if (process.contextIsolated) {
     contextBridge.exposeInMainWorld('projectAPI', projectAPI)
     contextBridge.exposeInMainWorld('extensionAPI', extensionAPI)
     contextBridge.exposeInMainWorld('developerAPI', developerAPI)
+    contextBridge.exposeInMainWorld('bacnetAPI', bacnetAPI)
   } catch (error) {
     console.error(error)
   }
@@ -352,4 +476,6 @@ if (process.contextIsolated) {
   window.extensionAPI = extensionAPI
   // @ts-ignore (define in dts)
   window.developerAPI = developerAPI
+  // @ts-ignore (define in dts)
+  window.bacnetAPI = bacnetAPI
 }

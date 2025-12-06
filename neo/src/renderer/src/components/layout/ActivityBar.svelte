@@ -2,13 +2,14 @@
   import { layoutStore } from '$lib/stores/layout.svelte'
   import * as Tooltip from '$lib/components/ui/tooltip'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu'
-  import { Files, Search, GitBranch, Package, Settings, Bug, Keyboard } from '@lucide/svelte'
+  import { Files, Search, Radio, GitBranch, Package, Settings, Bug, Keyboard } from '@lucide/svelte'
   import { documentStore } from '$lib/stores/documents.svelte'
   import { editorStore } from '$lib/stores/editor.svelte'
 
   const activities = [
     { id: 'explorer', icon: Files, label: 'Explorer' },
     { id: 'search', icon: Search, label: 'Search' },
+    { id: 'bacnet-discovery', icon: Radio, label: 'BACnet Discovery' },
     { id: 'git', icon: GitBranch, label: 'Source Control' },
     { id: 'debug', icon: Bug, label: 'Run and Debug' },
     { id: 'extensions', icon: Package, label: 'Extensions' }

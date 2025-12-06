@@ -1,6 +1,11 @@
-import type { ConnectionState, ServerConfig, ChangeEvent } from '../../../../preload/index.d'
-import { SvelteMap } from 'svelte/reactivity'
+import type { ConnectionState, ServerConfig, ChangeEvent, DiscoveredDevice, DiscoveryOptions } from '../../../../preload/index.d'
+import { SvelteMap, SvelteSet } from 'svelte/reactivity'
 import { documentStore } from './documents.svelte'
+
+export type DiscoveryState = 'idle' | 'scanning' | 'stopping'
+
+// Re-export for convenience
+export type { DiscoveredDevice, DiscoveryOptions } from '../../../../preload/index.d'
 
 export interface ServerState {
   connection: ConnectionState
@@ -74,6 +79,11 @@ const defaultConfig: ServerConfig = {
   port: 9600
 }
 
+// Extended discovered device with alreadyExists flag
+export interface DiscoveredDeviceWithStatus extends DiscoveredDevice {
+  alreadyExists: boolean
+}
+
 function createServerStore() {
   let connection = $state<ConnectionState>({ ...defaultConnectionState })
   let config = $state<ServerConfig>({ ...defaultConfig })
@@ -88,9 +98,19 @@ function createServerStore() {
   let error = $state<string | null>(null)
   let initialized = $state(false)
 
+  // BACnet discovery state
+  let discoveryState = $state<DiscoveryState>('idle')
+  let discoveredDevices = $state<DiscoveredDeviceWithStatus[]>([])
+  const selectedDeviceIds = new SvelteSet<number>()
+
   // Cleanup functions for event listeners
   let cleanupStateListener: (() => void) | null = null
   let cleanupChangeListener: (() => void) | null = null
+  let cleanupBacnetDiscoveryStarted: (() => void) | null = null
+  let cleanupBacnetDeviceFound: (() => void) | null = null
+  let cleanupBacnetDiscoveryComplete: (() => void) | null = null
+  let cleanupBacnetDeviceAdded: (() => void) | null = null
+  let cleanupBacnetDeviceRemoved: (() => void) | null = null
 
   return {
     // Getters
@@ -135,6 +155,20 @@ function createServerStore() {
       return connection.state === 'connected'
     },
 
+    // Discovery state getters
+    get discoveryState() {
+      return discoveryState
+    },
+    get discoveredDevices() {
+      return discoveredDevices
+    },
+    get selectedDeviceIds() {
+      return selectedDeviceIds
+    },
+    get isScanning() {
+      return discoveryState === 'scanning'
+    },
+
     // Initialize the store - call this on app startup
     async init() {
       if (initialized) return
@@ -167,6 +201,43 @@ function createServerStore() {
         this.handleChange(event)
       })
 
+      // Listen for BACnet discovery events
+      cleanupBacnetDiscoveryStarted = window.bacnetAPI.onDiscoveryStarted(() => {
+        discoveryState = 'scanning'
+      })
+
+      cleanupBacnetDeviceFound = window.bacnetAPI.onDeviceFound((device, alreadyExists) => {
+        // Add to discovered devices if not already present
+        const exists = discoveredDevices.some(d => d.device_id === device.device_id)
+        if (!exists) {
+          discoveredDevices = [...discoveredDevices, { ...device, alreadyExists }]
+        }
+      })
+
+      cleanupBacnetDiscoveryComplete = window.bacnetAPI.onDiscoveryComplete(() => {
+        discoveryState = 'idle'
+      })
+
+      cleanupBacnetDeviceAdded = window.bacnetAPI.onDeviceAdded((deviceId, _entityId) => {
+        // Update the discovered device to show it's now in the system
+        discoveredDevices = discoveredDevices.map(d =>
+          d.device_id === deviceId ? { ...d, alreadyExists: true } : d
+        )
+        // Remove from selection
+        selectedDeviceIds.delete(deviceId)
+        // Refresh the bacnet devices list
+        this.fetchBacnetDevices()
+      })
+
+      cleanupBacnetDeviceRemoved = window.bacnetAPI.onDeviceRemoved((deviceId) => {
+        // Update the discovered device to show it's no longer in the system
+        discoveredDevices = discoveredDevices.map(d =>
+          d.device_id === deviceId ? { ...d, alreadyExists: false } : d
+        )
+        // Refresh the bacnet devices list
+        this.fetchBacnetDevices()
+      })
+
       initialized = true
     },
 
@@ -174,6 +245,11 @@ function createServerStore() {
     destroy() {
       cleanupStateListener?.()
       cleanupChangeListener?.()
+      cleanupBacnetDiscoveryStarted?.()
+      cleanupBacnetDeviceFound?.()
+      cleanupBacnetDiscoveryComplete?.()
+      cleanupBacnetDeviceAdded?.()
+      cleanupBacnetDeviceRemoved?.()
       initialized = false
     },
 
@@ -392,6 +468,118 @@ function createServerStore() {
         })
       } catch (e) {
         console.error('Failed to request BACnet property read:', e)
+        throw e
+      }
+    },
+
+    // BACnet Discovery operations
+    async startDiscovery(options?: DiscoveryOptions): Promise<void> {
+      // Clear previous results and selection
+      discoveredDevices = []
+      selectedDeviceIds.clear()
+      discoveryState = 'scanning'
+
+      try {
+        await window.bacnetAPI.startDiscovery(options)
+      } catch (e) {
+        console.error('Failed to start BACnet discovery:', e)
+        discoveryState = 'idle'
+        throw e
+      }
+    },
+
+    async stopDiscovery(): Promise<void> {
+      if (discoveryState !== 'scanning') return
+
+      discoveryState = 'stopping'
+      try {
+        await window.bacnetAPI.stopDiscovery()
+      } catch (e) {
+        console.error('Failed to stop BACnet discovery:', e)
+      }
+      discoveryState = 'idle'
+    },
+
+    clearDiscoveredDevices(): void {
+      discoveredDevices = []
+      selectedDeviceIds.clear()
+    },
+
+    // Device selection for batch add
+    toggleDeviceSelection(deviceId: number): void {
+      if (selectedDeviceIds.has(deviceId)) {
+        selectedDeviceIds.delete(deviceId)
+      } else {
+        selectedDeviceIds.add(deviceId)
+      }
+    },
+
+    selectAllDevices(): void {
+      // Select only devices not already in the system
+      discoveredDevices.forEach(d => {
+        if (!d.alreadyExists) {
+          selectedDeviceIds.add(d.device_id)
+        }
+      })
+    },
+
+    deselectAllDevices(): void {
+      selectedDeviceIds.clear()
+    },
+
+    // Add a single device to the system
+    async addBacnetDevice(device: DiscoveredDevice): Promise<void> {
+      try {
+        // Convert to plain object for IPC (Svelte proxy objects can't be cloned)
+        const plainDevice: DiscoveredDevice = {
+          device_id: device.device_id,
+          address: device.address,
+          max_apdu: device.max_apdu,
+          vendor_id: device.vendor_id,
+          segmentation: device.segmentation,
+          vendor_name: device.vendor_name,
+          model_name: device.model_name,
+          object_name: device.object_name
+        }
+        await window.bacnetAPI.addDevice(plainDevice)
+      } catch (e) {
+        console.error('Failed to add BACnet device:', e)
+        throw e
+      }
+    },
+
+    // Add all selected devices
+    async addSelectedDevices(): Promise<void> {
+      const devicesToAdd = discoveredDevices.filter(
+        d => selectedDeviceIds.has(d.device_id) && !d.alreadyExists
+      )
+
+      for (const device of devicesToAdd) {
+        try {
+          // Convert to plain object for IPC (Svelte proxy objects can't be cloned)
+          const plainDevice: DiscoveredDevice = {
+            device_id: device.device_id,
+            address: device.address,
+            max_apdu: device.max_apdu,
+            vendor_id: device.vendor_id,
+            segmentation: device.segmentation,
+            vendor_name: device.vendor_name,
+            model_name: device.model_name,
+            object_name: device.object_name
+          }
+          await window.bacnetAPI.addDevice(plainDevice)
+        } catch (e) {
+          console.error(`Failed to add device ${device.device_id}:`, e)
+        }
+      }
+    },
+
+    // Remove a device from the system
+    async removeBacnetDevice(deviceId: number): Promise<void> {
+      try {
+        await window.bacnetAPI.removeDevice(deviceId)
+      } catch (e) {
+        console.error('Failed to remove BACnet device:', e)
         throw e
       }
     }

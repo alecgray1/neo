@@ -16,6 +16,7 @@ path = "src/main.rs"
 # Internal blueprint crates
 blueprint_runtime.workspace = true
 neo-js-runtime.workspace = true
+neo-ecs.workspace = true
 
 tokio.workspace = true
 

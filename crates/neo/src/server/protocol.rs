@@ -91,10 +91,51 @@ pub enum ClientMessage {
         #[serde(default = "default_property")]
         property: String,
     },
+
+    /// Start BACnet device discovery session (streams results back)
+    #[serde(rename = "bacnet:discover")]
+    BacnetDiscover {
+        id: String,
+        /// Optional lower bound for device instance range
+        #[serde(rename = "lowLimit")]
+        low_limit: Option<u32>,
+        /// Optional upper bound for device instance range
+        #[serde(rename = "highLimit")]
+        high_limit: Option<u32>,
+        /// Discovery duration in seconds (default: 10)
+        #[serde(default = "default_discovery_duration")]
+        duration: u32,
+    },
+
+    /// Stop an active BACnet discovery session
+    #[serde(rename = "bacnet:stopDiscovery")]
+    BacnetStopDiscovery {
+        id: String,
+    },
+
+    /// Add a discovered BACnet device to the system
+    #[serde(rename = "bacnet:addDevice")]
+    BacnetAddDevice {
+        id: String,
+        /// The discovered device info (from bacnet:deviceFound)
+        device: crate::bacnet::DiscoveredDevice,
+    },
+
+    /// Remove a BACnet device from the system
+    #[serde(rename = "bacnet:removeDevice")]
+    BacnetRemoveDevice {
+        id: String,
+        #[serde(rename = "deviceId")]
+        device_id: u32,
+    },
 }
 
 fn default_property() -> String {
     "present-value".to_string()
+}
+
+fn default_discovery_duration() -> u32 {
+    10
 }
 
 /// Plugin registration data from Vite plugin
@@ -169,6 +210,52 @@ pub enum ServerMessage {
     PluginRestarted {
         #[serde(rename = "pluginId")]
         plugin_id: String,
+    },
+
+    /// BACnet discovery session started
+    #[serde(rename = "bacnet:discoveryStarted")]
+    BacnetDiscoveryStarted {
+        id: String,
+    },
+
+    /// BACnet device found during discovery (streamed to client)
+    #[serde(rename = "bacnet:deviceFound")]
+    BacnetDeviceFound {
+        /// Request ID from the discovery request
+        id: String,
+        /// The discovered device
+        device: crate::bacnet::DiscoveredDevice,
+        /// Whether this device already exists in the system
+        #[serde(rename = "alreadyExists")]
+        already_exists: bool,
+    },
+
+    /// BACnet discovery session completed
+    #[serde(rename = "bacnet:discoveryComplete")]
+    BacnetDiscoveryComplete {
+        id: String,
+        /// Number of devices found during this session
+        #[serde(rename = "devicesFound")]
+        devices_found: u32,
+    },
+
+    /// BACnet device added to the system
+    #[serde(rename = "bacnet:deviceAdded")]
+    BacnetDeviceAdded {
+        id: String,
+        #[serde(rename = "deviceId")]
+        device_id: u32,
+        /// ECS entity ID for this device
+        #[serde(rename = "entityId")]
+        entity_id: u64,
+    },
+
+    /// BACnet device removed from the system
+    #[serde(rename = "bacnet:deviceRemoved")]
+    BacnetDeviceRemoved {
+        id: String,
+        #[serde(rename = "deviceId")]
+        device_id: u32,
     },
 }
 

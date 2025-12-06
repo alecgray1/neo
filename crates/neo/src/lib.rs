@@ -5,6 +5,7 @@
 //! - Visual scripting via blueprints
 //! - Process-isolated JavaScript plugins via deno_core
 //! - Project management and WebSocket API
+//! - ECS-based entity data model via Flecs
 
 // Re-export core crates
 pub use blueprint_runtime;
@@ -23,3 +24,6 @@ pub mod server;
 
 // BACnet network service
 pub mod bacnet;
+
+// ECS world service
+pub mod ecs;

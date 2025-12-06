@@ -98,8 +98,12 @@ impl Service for BacnetService {
         ServiceSpec::new("bacnet/network", "BACnet Network Service")
             .with_subscriptions(vec![
                 "bacnet/discover".to_string(),
+                "bacnet/discover-session".to_string(),
+                "bacnet/stop-discovery-session".to_string(),
                 "bacnet/read".to_string(),
                 "bacnet/read-objects".to_string(),
+                "bacnet/device-added".to_string(),
+                "bacnet/device-removed".to_string(),
             ])
             .with_description("BACnet/IP device discovery and point reading")
     }
@@ -148,25 +152,17 @@ impl Service for BacnetService {
             while let Ok(response) = resp_rx.recv() {
                 match response {
                     WorkerResponse::DeviceDiscovered(device) => {
+                        // Legacy discovery path - just log, don't auto-store
+                        // New flow uses SessionDeviceDiscovered instead
                         tracing::info!(
-                            "BACnet device discovered: {} at {} (vendor={})",
+                            "BACnet device discovered (legacy): {} at {} (vendor={})",
                             device.device_id,
                             device.address,
                             device.vendor_id
                         );
-
-                        // Automatically read object list to start polling
-                        let device_id = device.device_id;
-                        let _ = worker_tx.send(WorkerCommand::ReadObjectList { device_id });
-
-                        // Store in AppState and broadcast to subscribers
-                        let state = state.clone();
-                        rt.spawn(async move {
-                            state.add_bacnet_device(device).await;
-                        });
                     }
                     WorkerResponse::PropertyRead(result) => {
-                        tracing::info!(
+                        tracing::debug!(
                             "BACnet property read: device={} {}.{}.{} = {:?}",
                             result.device_id,
                             result.object_type,
@@ -174,16 +170,37 @@ impl Service for BacnetService {
                             result.property,
                             result.value
                         );
-                        // Store in AppState and broadcast to subscribers
+
+                        // Emit event for ECS to update entity component
+                        let event_data = serde_json::json!({
+                            "device_id": result.device_id,
+                            "object_type": result.object_type,
+                            "instance": result.instance,
+                            "property": result.property,
+                            "value": result.value,
+                            "timestamp": result.timestamp,
+                        });
+                        let event = blueprint_runtime::service::Event::new(
+                            "bacnet/property-read",
+                            "bacnet/network",
+                            event_data.clone(),
+                        );
+                        state.service_manager().publish_event(event);
+
+                        // Broadcast to WebSocket subscribers
+                        let path = format!(
+                            "/bacnet/devices/{}/objects/{}/{}/{}",
+                            result.device_id, result.object_type, result.instance, result.property
+                        );
                         let state = state.clone();
                         rt.spawn(async move {
-                            state.set_bacnet_object_value(
-                                result.device_id,
-                                &result.object_type,
-                                result.instance,
-                                &result.property,
-                                result.value,
-                                result.timestamp,
+                            state.broadcast(
+                                &path,
+                                crate::server::ServerMessage::change(
+                                    path.clone(),
+                                    crate::server::ChangeType::Updated,
+                                    Some(event_data),
+                                ),
                             ).await;
                         });
                     }
@@ -195,7 +212,6 @@ impl Service for BacnetService {
                         );
 
                         // Filter to readable object types for polling
-                        // Note: object types come as lowercase without hyphens (e.g., "analoginput")
                         let readable_types = [
                             "analoginput", "analogoutput", "analogvalue",
                             "binaryinput", "binaryoutput", "binaryvalue",
@@ -210,25 +226,78 @@ impl Service for BacnetService {
                         if !poll_objects.is_empty() {
                             let device_id = result.device_id;
                             let num_objects = poll_objects.len();
-                            // Poll interval: read one object per 200ms, so full cycle = num_objects * 200ms
-                            // This spreads the reads across time to avoid overwhelming the device
                             let _ = worker_tx.send(WorkerCommand::StartPolling {
                                 device_id,
                                 objects: poll_objects,
-                                interval_ms: 200, // 200ms between individual reads
+                                interval_ms: 3000,
                             });
                             tracing::info!(
-                                "Started polling {} objects for device {} (full cycle: {}ms)",
+                                "Started polling {} objects for device {} (full cycle: {}s)",
                                 num_objects,
                                 device_id,
-                                num_objects * 200
+                                num_objects * 3
                             );
                         }
 
-                        // Store in AppState and broadcast to subscribers
+                        // Emit event for ECS to create child entities
+                        let event_data = serde_json::json!({
+                            "device_id": result.device_id,
+                            "objects": result.objects,
+                        });
+                        let event = blueprint_runtime::service::Event::new(
+                            "bacnet/object-list",
+                            "bacnet/network",
+                            event_data.clone(),
+                        );
+                        state.service_manager().publish_event(event);
+
+                        // Broadcast to WebSocket subscribers
+                        let path = format!("/bacnet/devices/{}/objects", result.device_id);
                         let state = state.clone();
                         rt.spawn(async move {
-                            state.set_bacnet_device_objects(result.device_id, result.objects).await;
+                            state.broadcast(
+                                &path,
+                                crate::server::ServerMessage::change(
+                                    path.clone(),
+                                    crate::server::ChangeType::Updated,
+                                    Some(event_data),
+                                ),
+                            ).await;
+                        });
+                    }
+                    WorkerResponse::SessionDeviceDiscovered { client_id, request_id, device } => {
+                        tracing::debug!(
+                            "Session device discovered: client={} device={}",
+                            client_id, device.device_id
+                        );
+
+                        // Check if device already exists in ECS
+                        let device_id = device.device_id;
+                        let state = state.clone();
+                        rt.spawn(async move {
+                            let already_exists = state.device_exists_in_ecs(device_id).await;
+
+                            let message = crate::server::ServerMessage::BacnetDeviceFound {
+                                id: request_id,
+                                device,
+                                already_exists,
+                            };
+                            state.send_to_client(client_id, message).await;
+                        });
+                    }
+                    WorkerResponse::SessionComplete { client_id, request_id, devices_found } => {
+                        tracing::debug!(
+                            "Session complete: client={} devices_found={}",
+                            client_id, devices_found
+                        );
+
+                        let state = state.clone();
+                        rt.spawn(async move {
+                            let message = crate::server::ServerMessage::BacnetDiscoveryComplete {
+                                id: request_id,
+                                devices_found,
+                            };
+                            state.send_to_client(client_id, message).await;
                         });
                     }
                     WorkerResponse::Error(e) => {
@@ -314,6 +383,72 @@ impl Service for BacnetService {
                     });
                 } else {
                     tracing::warn!("Invalid bacnet/read-objects event: {:?}", event.data);
+                }
+            }
+            "bacnet/discover-session" => {
+                // Start a streaming discovery session for a specific client
+                let session_id = event.data.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                    .unwrap_or_else(uuid::Uuid::new_v4);
+                let client_id = event.data.get("client_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok());
+                let request_id = event.data.get("request_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let low_limit = event.data.get("low_limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let high_limit = event.data.get("high_limit")
+                    .and_then(|v| v.as_u64())
+                    .map(|v| v as u32);
+                let duration_secs = event.data.get("duration")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(10);
+
+                if let Some(client_id) = client_id {
+                    tracing::info!("Starting discovery session {} for client {}", session_id, client_id);
+                    let _ = tx.send(WorkerCommand::DiscoverSession {
+                        session_id,
+                        client_id,
+                        request_id,
+                        low_limit,
+                        high_limit,
+                        duration_secs,
+                    });
+                } else {
+                    tracing::warn!("Invalid bacnet/discover-session event: missing client_id");
+                }
+            }
+            "bacnet/stop-discovery-session" => {
+                if let Some(session_id) = event.data.get("session_id")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| uuid::Uuid::parse_str(s).ok())
+                {
+                    tracing::info!("Stopping discovery session {}", session_id);
+                    let _ = tx.send(WorkerCommand::StopDiscoverySession { session_id });
+                } else {
+                    tracing::warn!("Invalid bacnet/stop-discovery-session event: missing session_id");
+                }
+            }
+            "bacnet/device-added" => {
+                // Device was added to ECS - read its object list and start polling
+                if let Some(device_id) = event.data.get("device_id").and_then(|v| v.as_u64()) {
+                    tracing::info!("Device {} added to system, reading object list", device_id);
+                    let _ = tx.send(WorkerCommand::ReadObjectList {
+                        device_id: device_id as u32,
+                    });
+                }
+            }
+            "bacnet/device-removed" => {
+                // Device was removed from ECS - stop polling
+                if let Some(device_id) = event.data.get("device_id").and_then(|v| v.as_u64()) {
+                    tracing::info!("Device {} removed from system, stopping polling", device_id);
+                    let _ = tx.send(WorkerCommand::StopPolling {
+                        device_id: device_id as u32,
+                    });
                 }
             }
             _ => {}

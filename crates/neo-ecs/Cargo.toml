@@ -1,0 +1,30 @@
+[package]
+name = "neo-ecs"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+# Flecs ECS (local path during development)
+flecs_ecs = { path = "/home/alec/Personal/Flecs-Rust/flecs_ecs", features = [
+    "flecs_meta",      # Runtime reflection for dynamic components
+    "flecs_json",      # JSON serialization for persistence
+] }
+
+# Async/threading
+tokio = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+
+[dev-dependencies]
+tokio-test = { workspace = true }

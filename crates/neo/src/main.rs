@@ -16,6 +16,7 @@ use blueprint_runtime::service::ServiceManager;
 use blueprint_runtime::JsNodeLibrary;
 
 use neo::bacnet::{BacnetConfig, BacnetService};
+use neo::ecs::{EcsConfig, EcsService};
 use neo::engine::BlueprintExecutor;
 use neo::plugin::{JsService, JsServiceConfig};
 use neo::project::{BlueprintConfig, LoadedPlugin, ProjectLoader, ProjectWatcher};
@@ -110,6 +111,25 @@ async fn async_main() -> Result<()> {
             // Start plugin services
             if !project.plugins.is_empty() {
                 start_plugins(&service_manager, &project.plugins).await;
+            }
+
+            // Start ECS service
+            // Create EcsWorld first to get the handle for AppState
+            let ecs_world = neo_ecs::EcsWorld::new();
+            let ecs_handle = ecs_world.handle();
+
+            // Set ECS handle on AppState so WebSocket handlers can access it
+            state.set_ecs_handle(ecs_handle).await;
+
+            let ecs_config = EcsConfig::new(project_path);
+            let ecs_service = EcsService::with_world(ecs_config, ecs_world);
+            match service_manager.spawn(ecs_service).await {
+                Ok(handle) => {
+                    info!("ECS service started (service_id: {})", handle.service_id);
+                }
+                Err(e) => {
+                    warn!("Failed to start ECS service: {}", e);
+                }
             }
 
             // Start BACnet service (reads BACNET_IP, BACNET_PORT, BACNET_BROADCAST from env)

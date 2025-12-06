@@ -12,7 +12,18 @@ export interface ClientMessage {
 }
 
 export interface ServerMessage {
-  type: 'Connected' | 'Response' | 'Change' | 'Error' | 'Pong'
+  type:
+    | 'Connected'
+    | 'Response'
+    | 'Change'
+    | 'Error'
+    | 'Pong'
+    // BACnet discovery messages
+    | 'bacnet:discoveryStarted'
+    | 'bacnet:deviceFound'
+    | 'bacnet:discoveryComplete'
+    | 'bacnet:deviceAdded'
+    | 'bacnet:deviceRemoved'
   session_id?: string
   server_version?: string
   id?: string
@@ -23,6 +34,21 @@ export interface ServerMessage {
   change_type?: 'created' | 'updated' | 'deleted'
   code?: string
   message?: string
+  // BACnet-specific fields
+  device?: DiscoveredDevice
+  alreadyExists?: boolean
+  devicesFound?: number
+  deviceId?: number
+  entityId?: number
+}
+
+export interface DiscoveredDevice {
+  device_id: number
+  address: string
+  vendor_id: number
+  vendor_name?: string
+  model_name?: string
+  object_name?: string
 }
 
 export type ConnectionState = 'disconnected' | 'connecting' | 'connected' | 'reconnecting'
@@ -237,6 +263,41 @@ class WebSocketService {
 
         case 'Pong':
           // Keep-alive response, nothing to do
+          break
+
+        // BACnet discovery messages - forward to renderer
+        case 'bacnet:discoveryStarted':
+          this.notifyRenderer('bacnet:discovery-started', { id: message.id })
+          break
+
+        case 'bacnet:deviceFound':
+          this.notifyRenderer('bacnet:device-found', {
+            id: message.id,
+            device: message.device,
+            alreadyExists: message.alreadyExists ?? false
+          })
+          break
+
+        case 'bacnet:discoveryComplete':
+          this.notifyRenderer('bacnet:discovery-complete', {
+            id: message.id,
+            devicesFound: message.devicesFound ?? 0
+          })
+          break
+
+        case 'bacnet:deviceAdded':
+          this.notifyRenderer('bacnet:device-added', {
+            id: message.id,
+            deviceId: message.deviceId,
+            entityId: message.entityId
+          })
+          break
+
+        case 'bacnet:deviceRemoved':
+          this.notifyRenderer('bacnet:device-removed', {
+            id: message.id,
+            deviceId: message.deviceId
+          })
           break
       }
     } catch (e) {

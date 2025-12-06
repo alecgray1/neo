@@ -172,6 +172,245 @@ pub fn op_get_all_variables(state: &mut OpState) -> HashMap<String, serde_json::
         .unwrap_or_default()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ECS Ops
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Create a new ECS entity.
+#[op2(async)]
+#[bigint]
+pub async fn op_ecs_create_entity(
+    state: Rc<RefCell<OpState>>,
+    #[string] name: Option<String>,
+    #[bigint] parent: Option<u64>,
+    #[serde] components: Vec<(String, serde_json::Value)>,
+    #[serde] tags: Vec<String>,
+) -> Result<u64, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .create_entity(name, parent, components, tags)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Delete an ECS entity.
+#[op2(async)]
+pub async fn op_ecs_delete_entity(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+) -> Result<(), deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .delete_entity(entity_id)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Get a component from an entity.
+#[op2(async)]
+#[serde]
+pub async fn op_ecs_get_component(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+    #[string] component: String,
+) -> Result<Option<serde_json::Value>, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .get_component(entity_id, &component)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Set a component on an entity.
+#[op2(async)]
+pub async fn op_ecs_set_component(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+    #[string] component: String,
+    #[serde] data: serde_json::Value,
+) -> Result<(), deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .set_component(entity_id, &component, data)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Add a tag to an entity.
+#[op2(async)]
+pub async fn op_ecs_add_tag(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+    #[string] tag: String,
+) -> Result<(), deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .add_tag(entity_id, &tag)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Remove a tag from an entity.
+#[op2(async)]
+pub async fn op_ecs_remove_tag(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+    #[string] tag: String,
+) -> Result<(), deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .remove_tag(entity_id, &tag)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Check if an entity has a tag.
+#[op2(async)]
+pub async fn op_ecs_has_tag(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+    #[string] tag: String,
+) -> Result<bool, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .has_tag(entity_id, &tag)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Look up an entity by name.
+#[op2(async)]
+#[serde]
+pub async fn op_ecs_lookup(
+    state: Rc<RefCell<OpState>>,
+    #[string] name: String,
+) -> Result<Option<u64>, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .lookup(&name)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Get children of an entity.
+#[op2(async)]
+#[serde]
+pub async fn op_ecs_get_children(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+) -> Result<Vec<u64>, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .get_children(entity_id)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Get parent of an entity.
+#[op2(async)]
+#[serde]
+pub async fn op_ecs_get_parent(
+    state: Rc<RefCell<OpState>>,
+    #[bigint] entity_id: u64,
+) -> Result<Option<u64>, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .get_parent(entity_id)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
+/// Query entities with specific components.
+#[op2(async)]
+#[serde]
+pub async fn op_ecs_query(
+    state: Rc<RefCell<OpState>>,
+    #[serde] components: Vec<String>,
+) -> Result<Vec<serde_json::Value>, deno_core::error::AnyError> {
+    let ecs = {
+        let state = state.borrow();
+        state.borrow::<RuntimeServices>().ecs.clone()
+    };
+
+    match ecs {
+        Some(store) => store
+            .query(components)
+            .await
+            .map_err(|e| deno_core::error::generic_error(e.to_string())),
+        None => Err(deno_core::error::generic_error("ECS store not available")),
+    }
+}
+
 deno_core::extension!(
     neo_runtime,
     ops = [
@@ -185,6 +424,18 @@ deno_core::extension!(
         op_get_variable,
         op_set_variable,
         op_get_all_variables,
+        // ECS ops
+        op_ecs_create_entity,
+        op_ecs_delete_entity,
+        op_ecs_get_component,
+        op_ecs_set_component,
+        op_ecs_add_tag,
+        op_ecs_remove_tag,
+        op_ecs_has_tag,
+        op_ecs_lookup,
+        op_ecs_get_children,
+        op_ecs_get_parent,
+        op_ecs_query,
     ],
     esm_entry_point = "ext:neo_runtime/bootstrap.js",
     esm = [dir "src", "bootstrap.js"],

@@ -116,6 +116,18 @@ async fn handle_client_message(state: &AppState, session_id: Uuid, text: &str) {
         ClientMessage::BacnetReadProperty { id, device_id, object_type, instance, property } => {
             handle_bacnet_read_property(state, session_id, &id, device_id, &object_type, instance, &property).await;
         }
+        ClientMessage::BacnetDiscover { id, low_limit, high_limit, duration } => {
+            handle_bacnet_discover(state, session_id, &id, low_limit, high_limit, duration).await;
+        }
+        ClientMessage::BacnetStopDiscovery { id } => {
+            handle_bacnet_stop_discovery(state, session_id, &id).await;
+        }
+        ClientMessage::BacnetAddDevice { id, device } => {
+            handle_bacnet_add_device(state, session_id, &id, device).await;
+        }
+        ClientMessage::BacnetRemoveDevice { id, device_id } => {
+            handle_bacnet_remove_device(state, session_id, &id, device_id).await;
+        }
     }
 }
 
@@ -152,24 +164,15 @@ async fn handle_subscribe(state: &AppState, session_id: Uuid, id: &str, paths: V
         }
     }
 
-    // BACnet devices are stored in AppState, not in project
+    // BACnet devices are now stored in ECS
+    // TODO: Query ECS for initial data in Phase 6
     for path in &paths {
         if path == "/bacnet/devices" || path == "/bacnet/devices/*" || path == "/bacnet/devices/**" {
-            let devices = state.get_bacnet_devices();
+            // Return empty array until ECS query is implemented
             initial_data.insert(
                 "/bacnet/devices".to_string(),
-                serde_json::to_value(&devices).unwrap_or(Value::Null),
+                serde_json::json!([]),
             );
-        } else if path.starts_with("/bacnet/devices/") && !path.contains('*') {
-            let device_id_str = path.trim_start_matches("/bacnet/devices/");
-            if let Ok(device_id) = device_id_str.parse::<u32>() {
-                if let Some(device) = state.get_bacnet_device(device_id) {
-                    initial_data.insert(
-                        path.clone(),
-                        serde_json::to_value(&device).unwrap_or(Value::Null),
-                    );
-                }
-            }
         }
     }
 
@@ -198,35 +201,25 @@ async fn handle_unsubscribe(state: &AppState, session_id: Uuid, id: &str, paths:
 
 /// Handle get request
 async fn handle_get(state: &AppState, session_id: Uuid, id: &str, path: &str) {
-    // Handle BACnet devices separately (stored in AppState, not project)
+    // Handle BACnet devices - now stored in ECS
+    // TODO: Implement ECS query in Phase 6
     if path == "/bacnet/devices" {
-        let devices = state.get_bacnet_devices();
+        // Return empty array until ECS query is implemented
         send_to_client(
             state,
             session_id,
-            ServerMessage::success(id, Some(serde_json::to_value(devices).unwrap_or(Value::Null))),
+            ServerMessage::success(id, Some(serde_json::json!([]))),
         )
         .await;
         return;
     } else if path.starts_with("/bacnet/devices/") {
-        let device_id_str = path.trim_start_matches("/bacnet/devices/");
-        if let Ok(device_id) = device_id_str.parse::<u32>() {
-            if let Some(device) = state.get_bacnet_device(device_id) {
-                send_to_client(
-                    state,
-                    session_id,
-                    ServerMessage::success(id, Some(serde_json::to_value(device).unwrap_or(Value::Null))),
-                )
-                .await;
-                return;
-            }
-        }
+        // Device lookup not implemented yet
         send_error(
             state,
             session_id,
             Some(id),
             ErrorCode::NotFound,
-            format!("BACnet device not found: {}", path),
+            format!("BACnet device queries not yet implemented: {}", path),
         )
         .await;
         return;
@@ -569,6 +562,291 @@ async fn handle_bacnet_read_property(
             "property": property,
             "message": "Property read in progress"
         }))),
+    )
+    .await;
+}
+
+/// Create a deterministic discovery session UUID from client session and request ID
+fn discovery_session_uuid(client_session: Uuid, request_id: &str) -> Uuid {
+    // Create a deterministic UUID by hashing client session + request id
+    use std::hash::{Hash, Hasher};
+    use std::collections::hash_map::DefaultHasher;
+
+    let mut hasher = DefaultHasher::new();
+    client_session.hash(&mut hasher);
+    request_id.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    // Use the hash to create a UUID v4-like value
+    Uuid::from_u64_pair(hash, hash.rotate_left(32))
+}
+
+/// Handle BACnet discovery request - starts streaming discovery session
+async fn handle_bacnet_discover(
+    state: &AppState,
+    session_id: Uuid,
+    id: &str,
+    low_limit: Option<u32>,
+    high_limit: Option<u32>,
+    duration: u32,
+) {
+    use blueprint_runtime::service::Event;
+
+    // Create deterministic session ID so we can stop it later
+    let discovery_session_id = discovery_session_uuid(session_id, id);
+
+    tracing::info!(
+        "Starting BACnet discovery: client={} session={} low={:?} high={:?} duration={}",
+        session_id, discovery_session_id, low_limit, high_limit, duration
+    );
+
+    // Emit event to BacnetService with client_id for streaming responses back
+    let event = Event::new(
+        "bacnet/discover-session",
+        "websocket",
+        serde_json::json!({
+            "session_id": discovery_session_id.to_string(),
+            "client_id": session_id.to_string(),
+            "request_id": id,
+            "low_limit": low_limit,
+            "high_limit": high_limit,
+            "duration": duration as u64,
+        }),
+    );
+    state.service_manager().publish_event(event);
+
+    // Send acknowledgment - results will stream back via BacnetDeviceFound messages
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::BacnetDiscoveryStarted { id: id.to_string() },
+    )
+    .await;
+}
+
+/// Handle request to stop an active discovery session
+async fn handle_bacnet_stop_discovery(
+    state: &AppState,
+    session_id: Uuid,
+    id: &str,
+) {
+    use blueprint_runtime::service::Event;
+
+    // Recreate the same discovery session ID
+    let discovery_session_id = discovery_session_uuid(session_id, id);
+
+    tracing::info!(
+        "Stopping BACnet discovery: client={} session={}",
+        session_id, discovery_session_id
+    );
+
+    // Emit event to stop the discovery session
+    let event = Event::new(
+        "bacnet/stop-discovery-session",
+        "websocket",
+        serde_json::json!({
+            "session_id": discovery_session_id.to_string(),
+        }),
+    );
+    state.service_manager().publish_event(event);
+
+    // Send success - SessionComplete will be sent when worker stops
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::success(id, Some(serde_json::json!({
+            "status": "stopping"
+        }))),
+    )
+    .await;
+}
+
+/// Handle request to add a discovered device to the system
+async fn handle_bacnet_add_device(
+    state: &AppState,
+    session_id: Uuid,
+    id: &str,
+    device: crate::bacnet::DiscoveredDevice,
+) {
+    use blueprint_runtime::service::Event;
+
+    let device_id = device.device_id;
+
+    tracing::info!(
+        "Adding BACnet device: client={} device_id={} address={}",
+        session_id, device_id, device.address
+    );
+
+    // Get ECS handle
+    let ecs_handle = match state.ecs_handle().await {
+        Some(h) => h,
+        None => {
+            send_to_client(
+                state,
+                session_id,
+                ServerMessage::error_response(id, ErrorCode::InternalError, "ECS not initialized"),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Check if device already exists
+    let entity_name = format!("bacnet-device-{}", device_id);
+    if let Ok(Some(_)) = ecs_handle.lookup(&entity_name).await {
+        send_to_client(
+            state,
+            session_id,
+            ServerMessage::error_response(id, ErrorCode::AlreadyExists, format!("Device {} already exists", device_id)),
+        )
+        .await;
+        return;
+    }
+
+    // Create ECS entity with BacnetDevice component
+    let component_data = serde_json::json!({
+        "device_id": device_id,
+        "address": device.address,
+        "vendor_id": device.vendor_id,
+        "max_apdu": device.max_apdu,
+        "segmentation": device.segmentation,
+    });
+
+    let entity_id = match ecs_handle.create_entity(
+        Some(entity_name),
+        None,  // No parent
+        vec![("BacnetDevice".to_string(), component_data)],
+        vec!["Device".to_string()],  // Tag as a Device
+    ).await {
+        Ok(id) => id,
+        Err(e) => {
+            send_to_client(
+                state,
+                session_id,
+                ServerMessage::error_response(id, ErrorCode::InternalError, format!("Failed to create entity: {}", e)),
+            )
+            .await;
+            return;
+        }
+    };
+
+    tracing::info!(
+        "Created ECS entity for BACnet device {}: entity_id={:?}",
+        device_id, entity_id
+    );
+
+    // Emit event to trigger object list read and polling
+    let event = Event::new(
+        "bacnet/device-added",
+        "websocket",
+        serde_json::json!({
+            "device_id": device_id,
+            "entity_id": entity_id.0,
+            "address": device.address,
+        }),
+    );
+    state.service_manager().publish_event(event);
+
+    // Send success response
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::BacnetDeviceAdded {
+            id: id.to_string(),
+            device_id,
+            entity_id: entity_id.0,
+        },
+    )
+    .await;
+}
+
+/// Handle request to remove a device from the system
+async fn handle_bacnet_remove_device(
+    state: &AppState,
+    session_id: Uuid,
+    id: &str,
+    device_id: u32,
+) {
+    use blueprint_runtime::service::Event;
+
+    tracing::info!(
+        "Removing BACnet device: client={} device_id={}",
+        session_id, device_id
+    );
+
+    // Get ECS handle
+    let ecs_handle = match state.ecs_handle().await {
+        Some(h) => h,
+        None => {
+            send_to_client(
+                state,
+                session_id,
+                ServerMessage::error_response(id, ErrorCode::InternalError, "ECS not initialized"),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Find and delete the entity
+    let entity_name = format!("bacnet-device-{}", device_id);
+    let entity_id = match ecs_handle.lookup(&entity_name).await {
+        Ok(Some(eid)) => eid,
+        Ok(None) => {
+            send_to_client(
+                state,
+                session_id,
+                ServerMessage::error_response(id, ErrorCode::NotFound, format!("Device {} not found", device_id)),
+            )
+            .await;
+            return;
+        }
+        Err(e) => {
+            send_to_client(
+                state,
+                session_id,
+                ServerMessage::error_response(id, ErrorCode::InternalError, format!("Failed to lookup entity: {}", e)),
+            )
+            .await;
+            return;
+        }
+    };
+
+    // Delete the entity
+    if let Err(e) = ecs_handle.delete_entity(entity_id).await {
+        send_to_client(
+            state,
+            session_id,
+            ServerMessage::error_response(id, ErrorCode::InternalError, format!("Failed to delete entity: {}", e)),
+        )
+        .await;
+        return;
+    }
+
+    tracing::info!(
+        "Deleted ECS entity for BACnet device {}: entity_id={:?}",
+        device_id, entity_id
+    );
+
+    // Emit event to stop polling
+    let event = Event::new(
+        "bacnet/device-removed",
+        "websocket",
+        serde_json::json!({
+            "device_id": device_id,
+            "entity_id": entity_id.0,
+        }),
+    );
+    state.service_manager().publish_event(event);
+
+    // Send success response
+    send_to_client(
+        state,
+        session_id,
+        ServerMessage::BacnetDeviceRemoved {
+            id: id.to_string(),
+            device_id,
+        },
     )
     .await;
 }

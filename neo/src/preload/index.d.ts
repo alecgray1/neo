@@ -247,6 +247,44 @@ export interface ExtensionAPI {
   onContextSet(callback: (data: { key: string; value: unknown }) => void): () => void
 }
 
+// BACnet types
+export interface DiscoveredDevice {
+  device_id: number
+  address: string
+  max_apdu: number
+  vendor_id: number
+  segmentation: string
+  vendor_name?: string
+  model_name?: string
+  object_name?: string
+}
+
+export interface DiscoveryOptions {
+  lowLimit?: number
+  highLimit?: number
+  duration?: number
+}
+
+export interface DeviceAddedResult {
+  deviceId: number
+  entityId: number
+}
+
+export interface BACnetAPI {
+  // Discovery
+  startDiscovery(options?: DiscoveryOptions): Promise<void>
+  stopDiscovery(): Promise<void>
+  onDiscoveryStarted(callback: (id: string) => void): () => void
+  onDeviceFound(callback: (device: DiscoveredDevice, alreadyExists: boolean) => void): () => void
+  onDiscoveryComplete(callback: (devicesFound: number) => void): () => void
+
+  // Device management
+  addDevice(device: DiscoveredDevice): Promise<DeviceAddedResult>
+  removeDevice(deviceId: number): Promise<void>
+  onDeviceAdded(callback: (deviceId: number, entityId: number) => void): () => void
+  onDeviceRemoved(callback: (deviceId: number) => void): () => void
+}
+
 declare global {
   interface Window {
     electron: ElectronAPI
@@ -257,5 +295,6 @@ declare global {
     serverAPI: ServerAPI
     projectAPI: ProjectAPI
     extensionAPI: ExtensionAPI
+    bacnetAPI: BACnetAPI
   }
 }
